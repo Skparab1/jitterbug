@@ -47,6 +47,13 @@ async fn main() -> anyhow::Result<()> {
 		sequence_number
 	).await?;
 
+	let mut buffer = [0u8; 264];
+	loop {
+		let (bytes_read, sender_addr) = client.receive_bytes(&mut buffer).await?;
+
+		println!("Received datagram from {}: {} bytes", sender_addr, bytes_read);
+	}
+
 
 	// for _ in 0..100 {
 	// 	client.send_message("Hello, world!").await?;
@@ -72,13 +79,13 @@ async fn send_connection_request(
 	// construct the frame of the message
 	let encrypted_key_bytes = enc_data.clone(); // the actual payload
 
-	let seq_byte = sequence_number.to_be_bytes(); // 4 bytes
+	let seq_bytes = sequence_number.to_be_bytes(); // 4 bytes
 
 	// Combine them into one frame
 	let mut frame: Vec<u8> = Vec::new();
 	frame.extend_from_slice(&MAGIC_BYTES);	// 3 bytes
 	frame.extend_from_slice(&[packet_types::CONNECTION_SYN]); // 1 byte
-	frame.extend_from_slice(&seq_byte);  // 4 bytes
+	frame.extend_from_slice(&seq_bytes);  // 4 bytes
 	frame.extend_from_slice(&encrypted_key_bytes); // UUID payload 256 bytes
 
 	// Send the combined bytes
