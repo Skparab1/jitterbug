@@ -33,7 +33,6 @@ async fn main() -> anyhow::Result<()> {
 	let public_key = RsaPublicKey::from_public_key_der(&der)?;
 
 
-
 	let mut sequence_number: u32 = 0;
 
 
@@ -52,6 +51,12 @@ async fn main() -> anyhow::Result<()> {
 		let (bytes_read, sender_addr) = client.receive_bytes(&mut buffer).await?;
 
 		println!("Received datagram from {}: {} bytes", sender_addr, bytes_read);
+
+		let payload: Vec<u8> = extract_payload(&buffer[..bytes_read], sequence_number, &my_uuid).expect("Payload extraction failed");;
+
+		let decoded: &str = std::str::from_utf8(&payload)?;
+
+		println!("Payload was {}", decoded);
 	}
 
 
@@ -60,6 +65,75 @@ async fn main() -> anyhow::Result<()> {
 	// }
 
 	Ok(())
+}
+
+fn validate_received_datagram(
+	datagram: &[u8],
+	current_seq: u32
+) -> bool {
+	// check magic bytes
+	let magic_bytes = &datagram[0..3];
+	if (magic_bytes != MAGIC_BYTES) {
+		println!("Message not intended for us, discarding.");
+		return false
+	}
+
+	if (datagram.len() < 8){
+		println!("Datagram too short");
+		return false
+	}
+
+	let seq_bytes: [u8; 4] = match datagram[4..8].try_into() {
+		Ok(bytes) => bytes,
+		Err(_) => {
+			println!("Failed to convert sequence bytes");
+			return false;
+		}
+	};
+	
+	let sequence_number: u32 = u32::from_be_bytes(seq_bytes);
+
+	if (sequence_number != current_seq + 1){
+		println!("Sequence number of received datagram was not an increment.");
+		println!("Got {}, expected {}", sequence_number, current_seq + 1);
+		return false
+	}
+
+	return true
+}
+
+fn extract_payload(
+	datagram: &[u8],
+	current_seq: u32,
+	uuid_param: &Uuid
+) -> anyhow::Result<Vec<u8>> {
+	// first check whether it is well-formatted for us or not.
+	if (!validate_received_datagram(datagram, current_seq)){
+		// return an error
+		return Err(anyhow::anyhow!("Invalid datagram received"))
+	}
+
+	// is it a connection syn or ack? if so, then it won't have a uuid as a part of the payload
+	let packet_type = datagram[3];
+	let mut payloadStart: usize = 8;
+	if (packet_type != packet_types::CONNECTION_SYN && 
+		packet_type != packet_types::CONNECTION_ACK){
+		
+		// check the uuid
+		let received_uuid = &datagram[8..24];
+		let uuid_bytes = uuid_param.as_bytes();
+		// println!("Expected UUID: {:02X?}", uuid_bytes);
+		// println!("Received UUID: {:02X?}", received_uuid);
+		if (uuid_bytes != received_uuid){
+			return Err(anyhow::anyhow!("UUID does not match"))
+		}
+
+		payloadStart = 24;
+	}
+
+	// Extract the payload from the datagram
+	let payload = &datagram[payloadStart..];
+	return Ok(payload.to_vec())
 }
 
 async fn send_connection_request(

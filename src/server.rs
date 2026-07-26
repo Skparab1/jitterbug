@@ -40,13 +40,13 @@ impl Server {
     ) -> anyhow::Result<()> {
         // we can build the datagram frame here.
 
-        println!("Building frame for {}", recipient);
+        // println!("Building frame for {}", recipient);
 
         let mut frame: Vec<u8> = Vec::new();
         frame.extend_from_slice(&MAGIC_BYTES);
         frame.extend_from_slice(&[packet_type]);
 
-        println!("Building frame for {}", recipient);
+        // println!("Building frame for {}", recipient);
         
         let connection = self
             .connections
@@ -63,7 +63,7 @@ impl Server {
 
         frame.extend_from_slice(&payload);
 
-        println!("Sending frame {:02X?} for {}", frame, recipient);
+        // println!("Sending frame {:02X?} for {}", frame, recipient);
 
         listener.send_to(&frame, recipient).await?;
         Ok(())
@@ -136,7 +136,7 @@ impl Server {
 
                         let entry = self.connections.entry(sender_addr).or_insert(ConnectionState {
                             uuid,
-                            sequence_number: 1,
+                            sequence_number: 1, // just the syn
                         });
 
                         println!("UUID: {} \t\t address: {}", uuid, sender_addr);
@@ -154,6 +154,7 @@ impl Server {
                         // println!("Sending connection ack to {} with sequence number: {}", sender_addr, entry.sequence_number);
                         // println!("Sending {:02X?} bytes to {}", frame, sender_addr);
 
+                        entry.sequence_number += 1; // sent the ack
 
                         listener.send_to(&frame, sender_addr).await?;
                     }
@@ -166,7 +167,7 @@ impl Server {
                         let recipients: Vec<SocketAddr> = self.connections.keys().copied().collect();
 
                         for recipient in recipients {
-                            println!("Attempt to send to {}", recipient);
+                            // println!("Attempt to send to {}", recipient);
                             self.send_instruction(&listener, &recipient, packet_types::MISC, line.as_bytes()).await?;
                         }
                     }
