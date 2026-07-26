@@ -1,0 +1,24 @@
+[package]
+name = "rust-tcp"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "rust_tcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "server"
+path = "src/bins/server.rs"
+
+[[bin]]
+name = "client"
+path = "src/bins/client.rs"
+
+[dependencies]
+anyhow = "1.0.103"
+tokio = { version = "1.52.3", features = ["full"] }
+rsa = "0.9"
+rand = "0.8"
+uuid = { version = "1.10", features = ["v4", "v7", "fast-rng"] }
+base64 = "0.22"
