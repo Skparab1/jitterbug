@@ -12,6 +12,9 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use uuid::Uuid;
 
+use crate::utils::{extract_payload, validate_datagram_type, send_datagram};
+
+
 pub struct Server {
     pub host: String,
     pub port: u16,
@@ -27,27 +30,12 @@ impl Server {
         }
     }
 
-    // pub async fn reply(&mut self, listener: UdpSocket, recipient: impl Into<String>, message: impl Into<String>){
-    //     listener.send_to(message.into().as_bytes(), recipient.into()).await?;
-    // }
-
-    // this function will determine the sequence
-    pub async fn send_instruction(&mut self, 
+    pub async fn send_datagram_to_client(&mut self, 
         listener: &UdpSocket, 
         recipient: &SocketAddr, 
         packet_type: u8,
-        payload: &[u8]
-    ) -> anyhow::Result<()> {
-        // we can build the datagram frame here.
+        payload: &[u8]) -> anyhow::Result<()>{
 
-        // println!("Building frame for {}", recipient);
-
-        let mut frame: Vec<u8> = Vec::new();
-        frame.extend_from_slice(&MAGIC_BYTES);
-        frame.extend_from_slice(&[packet_type]);
-
-        // println!("Building frame for {}", recipient);
-        
         let connection = self
             .connections
             .get_mut(recipient)
@@ -57,15 +45,10 @@ impl Server {
 
         let seq_bytes = connection.sequence_number.to_be_bytes();
 
-        frame.extend_from_slice(&seq_bytes);
-        let uuid_bytes = connection.uuid.as_bytes();
-        frame.extend_from_slice(uuid_bytes);
+        let uuid_bytes = *connection.uuid.as_bytes();
 
-        frame.extend_from_slice(&payload);
+        send_datagram(listener, recipient, packet_type, &seq_bytes, &uuid_bytes, payload).await;
 
-        // println!("Sending frame {:02X?} for {}", frame, recipient);
-
-        listener.send_to(&frame, recipient).await?;
         Ok(())
     }
 
@@ -168,20 +151,11 @@ impl Server {
 
                         for recipient in recipients {
                             // println!("Attempt to send to {}", recipient);
-                            self.send_instruction(&listener, &recipient, packet_types::MISC, line.as_bytes()).await?;
+                            self.send_datagram_to_client(&listener, &recipient, packet_types::MISC, line.as_bytes()).await;
                         }
                     }
-
                 }
             }
-
-            
-
-            //     println!("{}", byte);
-            // }
-
-            // let message = String::from_utf8_lossy(&buffer[..bytes_read]);
-            // println!("Received content: {} \nfrom {}", message, sender_addr);
         }        
     }
 }
