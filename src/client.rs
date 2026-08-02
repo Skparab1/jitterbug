@@ -2,6 +2,7 @@
 use tokio::net::UdpSocket;
 use std::io;
 use uuid::Uuid;
+use crate::audio::Audio;
 
 // Crypto and encoding
 use rand::thread_rng;
@@ -23,6 +24,9 @@ pub struct Client {
 
     // client variables
     sequence_number: u32,
+
+    // audio element
+    audio: Audio,
 }
 
 impl Client {
@@ -45,7 +49,9 @@ impl Client {
         
         let socket = UdpSocket::bind("0.0.0.0:0").await?;
 
-        Ok( Self{ server_host: host, server_port: port, socket, uuid, sequence_number: 0} )
+        let audio = Audio::new().await?;
+
+        Ok( Self{ server_host: host, server_port: port, socket, uuid, sequence_number: 0, audio } )
     }
 
     pub async fn syn_handshake(&mut self) -> anyhow::Result<()> {

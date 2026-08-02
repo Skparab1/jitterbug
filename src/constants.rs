@@ -16,3 +16,7 @@ pub struct ConnectionState {
 
 pub static SERVER_HOST: &str = "127.0.0.1";
 pub static SERVER_PORT: u16 = 8080;
+
+
+// for audio file storage
+pub static OUTPUT_FILE_PATH: &str = "temp-assets";

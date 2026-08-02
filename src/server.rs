@@ -15,6 +15,8 @@ use uuid::Uuid;
 use crate::utils::{validate_received_datagram, send_datagram};
 
 
+
+
 pub struct Server {
 
     // constants
@@ -58,6 +60,7 @@ impl Server {
 
         let der = self.public_key.to_public_key_der()?;
         println!("Public key: {}\n\n", STANDARD.encode(der.as_ref()));
+
 
         Ok(())
     }
