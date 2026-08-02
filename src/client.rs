@@ -44,7 +44,6 @@ impl Client {
         let uuid = Uuid::new_v4();
         
         let socket = UdpSocket::bind("0.0.0.0:0").await?;
-        let local = socket.local_addr()?;
 
         Ok( Self{ server_host: host, server_port: port, socket, uuid, sequence_number: 0} )
     }
@@ -63,7 +62,7 @@ impl Client {
         // now wait for the response
 
         let mut buffer = [0u8; 264];
-        let (bytes_read, sender_addr) = self.receive_bytes(&mut buffer).await?;
+        let (bytes_read, _sender_addr) = self.receive_bytes(&mut buffer).await?;
 
         validate_received_datagram(&buffer[..bytes_read], self.sequence_number + 1, packet_types::CONNECTION_ACK);
 
@@ -115,8 +114,6 @@ impl Client {
 
             self.sequence_number += 1;
         }
-
-        Ok(())
     }
 
     async fn send_message_bytes(&self, message_bytes: &[u8]) -> anyhow::Result<()> {
