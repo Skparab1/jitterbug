@@ -22,3 +22,5 @@ rsa = "0.9"
 rand = "0.8"
 uuid = { version = "1.10", features = ["v4", "v7", "fast-rng"] }
 base64 = "0.22"
+yt-dlp = "2.8.0"
+rodio = "0.19"
