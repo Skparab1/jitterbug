@@ -12,7 +12,7 @@ use base64::Engine as _;
 
 // Constants and in-house utils
 use crate::constants::packet_types;
-use crate::utils::{create_frame, validate_received_datagram, extract_payload};
+use crate::utils::{create_frame, validate_received_datagram, extract_payload, packet_type_to_text};
 
 
 pub struct Client {
@@ -109,13 +109,14 @@ impl Client {
         let mut buffer = [0u8; 264];
         loop {
             let (bytes_read, sender_addr) = self.receive_bytes(&mut buffer).await?;
-
-            println!("Received datagram from {}: {} bytes", sender_addr, bytes_read);
-
-            let payload: Vec<u8> = extract_payload(&buffer[..bytes_read], self.sequence_number + 1, &self.uuid, packet_types::MISC).expect("Payload extraction failed");
+            let payload: Vec<u8> = extract_payload(&buffer[..bytes_read], self.sequence_number + 1, &self.uuid, packet_types::AUDIO_ANY).expect("Payload extraction failed");
 
             let decoded: &str = std::str::from_utf8(&payload)?;
 
+            let packet_type = buffer[3];
+            let packet_text = packet_type_to_text(packet_type);
+
+            println!("Received datagram of type {} from {}", packet_text, sender_addr);
             println!("Payload was {}", decoded);
 
             self.sequence_number += 1;

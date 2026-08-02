@@ -5,6 +5,14 @@ pub mod packet_types {
 	pub const CONNECTION_ACK: u8 = 0x01;
 
     pub const MISC: u8 = 0x67;
+
+    pub const AUDIO_ANY: u8 = 0x10;
+    pub const AUDIO_LOAD: u8 = 0x11;
+    pub const AUDIO_SWAP: u8 = 0x12;
+    pub const AUDIO_PLAY: u8 = 0x13;
+    pub const AUDIO_PAUSE: u8 = 0x14;
+
+
 }
 
 pub static MAGIC_BYTES: [u8; 3] = [0x67, 0xf2, 0x5a];

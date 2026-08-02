@@ -15,7 +15,17 @@ pub fn validate_received_datagram(
 		return false;
 	}
 
-    if packet_type != datagram[3] {
+    if packet_type != datagram[3] && packet_type != packet_types::AUDIO_ANY {
+        println!("Packet type does not match");
+        return false;
+    }
+
+	if packet_type == packet_types::AUDIO_ANY && 
+		datagram[3] != packet_types::AUDIO_LOAD && 
+		datagram[3] != packet_types::AUDIO_SWAP && 
+		datagram[3] != packet_types::AUDIO_PLAY && 
+		datagram[3] != packet_types::AUDIO_PAUSE &&
+		datagram[3] != packet_types::MISC { // for now, we allow misc packets. This may change later.
         println!("Packet type does not match");
         return false;
     }
@@ -112,4 +122,17 @@ pub async fn send_datagram(
 
     listener.send_to(&frame, recipient).await?;
     Ok(())
+}
+
+pub fn packet_type_to_text(packet_type: u8) -> &'static str {
+    match packet_type {
+        packet_types::CONNECTION_SYN => "Connection SYN",
+        packet_types::CONNECTION_ACK => "Connection ACK",
+        packet_types::MISC => "Misc",
+        packet_types::AUDIO_LOAD => "Audio Load",
+        packet_types::AUDIO_SWAP => "Audio Swap",
+        packet_types::AUDIO_PLAY => "Audio Play",
+        packet_types::AUDIO_PAUSE => "Audio Pause",
+        _ => "Unknown",
+    }
 }

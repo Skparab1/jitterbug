@@ -137,10 +137,23 @@ impl Server {
                             break Ok(())
                         }
 
+                        let mut send_packet_type = packet_types::MISC;
+                        let mut payload = "".as_bytes();
+
+                        if line.starts_with("load ") {
+                            send_packet_type = packet_types::AUDIO_LOAD;
+                            payload = line[5..].as_bytes();
+                        } else if line.starts_with("swap") {
+                            send_packet_type = packet_types::AUDIO_SWAP;
+                        } else if line.starts_with("play") {
+                            send_packet_type = packet_types::AUDIO_PLAY;
+                        } else if line.starts_with("pause") {
+                            send_packet_type = packet_types::AUDIO_PAUSE;
+                        }
+
                         let recipients: Vec<SocketAddr> = self.connections.keys().copied().collect();
                         for recipient in recipients {
-                            // println!("Attempt to send to {}", recipient);
-                            let _ = self.send_datagram_to_client(&recipient, packet_types::MISC, &line.as_bytes()).await;
+                            let _ = self.send_datagram_to_client(&recipient, send_packet_type, &payload).await;
                         }
                     }
                 }
