@@ -85,6 +85,24 @@ pub fn validate_datagram_type(
     return validate_received_datagram(datagram, current_seq);
 }
 
+pub async fn create_frame(
+	packet_type: u8,
+    sequence_number: &[u8],
+    uuid_bytes: &[u8],
+    payload: Option<&[u8]>,
+) -> anyhow::Result<Vec<u8>> {
+	let mut frame: Vec<u8> = Vec::new();
+
+	frame.extend_from_slice(&MAGIC_BYTES);
+    frame.extend_from_slice(&[packet_type]);    
+    frame.extend_from_slice(&sequence_number);
+    frame.extend_from_slice(uuid_bytes);
+	if (payload.is_some()){
+    	frame.extend_from_slice(&payload.unwrap());
+	}
+
+	Ok(frame)
+}
 
 pub async fn send_datagram( 
     listener: &UdpSocket, 
@@ -94,23 +112,8 @@ pub async fn send_datagram(
     uuid_bytes: &[u8],
     payload: &[u8],
 ) -> anyhow::Result<()> {
-    // we can build the datagram frame here.
-
-    // println!("Building frame for {}", recipient);
-
-    let mut frame: Vec<u8> = Vec::new();
-    frame.extend_from_slice(&MAGIC_BYTES);
-    frame.extend_from_slice(&[packet_type]);
-
-    // println!("Building frame for {}", recipient);
     
-    frame.extend_from_slice(&sequence_number);
-    
-    frame.extend_from_slice(uuid_bytes);
-
-    frame.extend_from_slice(&payload);
-
-    // println!("Sending frame {:02X?} for {}", frame, recipient);
+    let frame = create_frame(packet_type, sequence_number, uuid_bytes, Some(payload)).await?;
 
     listener.send_to(&frame, recipient).await?;
     Ok(())
