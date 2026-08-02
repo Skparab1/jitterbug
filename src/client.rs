@@ -11,7 +11,7 @@ use base64::Engine as _;
 
 // Constants and in-house utils
 use crate::constants::packet_types;
-use crate::utils::{create_frame, validate_datagram_type, extract_payload};
+use crate::utils::{create_frame, validate_received_datagram, extract_payload};
 
 
 pub struct Client {
@@ -65,7 +65,7 @@ impl Client {
         let mut buffer = [0u8; 264];
         let (bytes_read, sender_addr) = self.receive_bytes(&mut buffer).await?;
 
-        validate_datagram_type(&buffer[..bytes_read], self.sequence_number, packet_types::CONNECTION_ACK);
+        validate_received_datagram(&buffer[..bytes_read], self.sequence_number + 1, packet_types::CONNECTION_ACK);
 
         println!("Connected!");
 
@@ -107,7 +107,7 @@ impl Client {
 
             println!("Received datagram from {}: {} bytes", sender_addr, bytes_read);
 
-            let payload: Vec<u8> = extract_payload(&buffer[..bytes_read], self.sequence_number, &self.uuid).expect("Payload extraction failed");
+            let payload: Vec<u8> = extract_payload(&buffer[..bytes_read], self.sequence_number + 1, &self.uuid, packet_types::MISC).expect("Payload extraction failed");
 
             let decoded: &str = std::str::from_utf8(&payload)?;
 

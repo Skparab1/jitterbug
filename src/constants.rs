@@ -13,3 +13,6 @@ pub struct ConnectionState {
     pub uuid: Uuid,
     pub sequence_number: u32,
 }
+
+pub static SERVER_HOST: &str = "127.0.0.1";
+pub static SERVER_PORT: u16 = 8080;

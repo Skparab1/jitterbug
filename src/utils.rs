@@ -3,9 +3,10 @@ use uuid::Uuid;
 use tokio::net::UdpSocket;
 use std::net::SocketAddr;
 
-fn validate_received_datagram(
+pub fn validate_received_datagram(
 	datagram: &[u8],
-	current_seq: u32
+	expected_seq: u32,
+	packet_type: u8,
 ) -> bool {
 	// check magic bytes
 	let magic_bytes = &datagram[0..3];
@@ -13,6 +14,11 @@ fn validate_received_datagram(
 		println!("Message not intended for us, discarding.");
 		return false;
 	}
+
+    if (packet_type != datagram[3]){
+        println!("Packet type does not match");
+        return false;
+    }
 
 	if (datagram.len() < 8){
 		println!("Datagram too short");
@@ -29,9 +35,9 @@ fn validate_received_datagram(
 	
 	let sequence_number: u32 = u32::from_be_bytes(seq_bytes);
 
-	if (sequence_number != current_seq + 1){
+	if (sequence_number != expected_seq){
 		println!("Sequence number of received datagram was not an increment.");
-		println!("Got {}, expected {}", sequence_number, current_seq + 1);
+		println!("Got {}, expected {}", sequence_number, expected_seq);
 		return false;
 	}    
 
@@ -41,10 +47,11 @@ fn validate_received_datagram(
 pub fn extract_payload(
 	datagram: &[u8],
 	current_seq: u32,
-	uuid_param: &Uuid
+	uuid_param: &Uuid,
+	expected_type: u8
 ) -> anyhow::Result<Vec<u8>> {
 	// first check whether it is well-formatted for us or not.
-	if (!validate_received_datagram(datagram, current_seq)){
+	if (!validate_received_datagram(datagram, current_seq, expected_type)){
 		// return an error
 		return Err(anyhow::anyhow!("Invalid datagram received"))
 	}
@@ -72,18 +79,6 @@ pub fn extract_payload(
 	return Ok(payload.to_vec())
 }
 
-pub fn validate_datagram_type(
-    datagram: &[u8],
-	current_seq: u32,
-	packet_type: u8
-) -> bool {
-    let read_type = datagram[3];
-    if (packet_type != read_type){
-        println!("Packet type does not match");
-        return false;
-    }
-    return validate_received_datagram(datagram, current_seq);
-}
 
 pub async fn create_frame(
 	packet_type: u8,

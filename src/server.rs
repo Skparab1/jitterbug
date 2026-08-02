@@ -1,37 +1,68 @@
 use tokio::net::UdpSocket;
-use tokio::io::{self, AsyncBufReadExt, BufReader};
+use tokio::io::{self, BufReader, AsyncBufReadExt};
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 
 use rsa::{RsaPrivateKey, RsaPublicKey, pkcs8::EncodePublicKey, rand_core::OsRng};
 
-use crate::constants::{MAGIC_BYTES, packet_types, ConnectionState};
+use crate::constants::{packet_types, ConnectionState, SERVER_HOST, SERVER_PORT};
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use uuid::Uuid;
 
-use crate::utils::{extract_payload, validate_datagram_type, send_datagram};
+use crate::utils::{validate_received_datagram, send_datagram};
 
 
 pub struct Server {
+
+    // constants
     pub host: String,
     pub port: u16,
-    pub connections: HashMap<SocketAddr, ConnectionState>
+
+    // connections
+    pub connections: HashMap<SocketAddr, ConnectionState>,
+    pub listener: UdpSocket,
+
+    // crypto
+    private_key: RsaPrivateKey,
+    pub public_key: RsaPublicKey
 }
 
 impl Server {
-    pub fn new(host: impl Into<String>, port: u16) -> Self {
-        Server {
-            host: host.into(),
-            port,
-            connections: HashMap::new()
+    pub async fn new() -> Self {
+        println!("Server is spinning up...\n\n");
+
+        let mut rng = OsRng;
+
+        let listener = UdpSocket::bind(format!("{}:{}", SERVER_HOST, SERVER_PORT)).await.expect("Socket binding failed");
+        let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("Private Key generation failed");
+        let public_key = RsaPublicKey::from(&private_key);
+        
+        Self {
+            host: SERVER_HOST.into(),
+            port: SERVER_PORT,
+            connections: HashMap::new(),
+
+            // these are placeholders, will be overwritten later
+            listener,
+            private_key,
+            public_key
         }
     }
 
+    pub async fn init(&mut self) -> anyhow::Result<()> {
+
+        println!("Address: {}:{}\n", self.host, self.port);
+
+        let der = self.public_key.to_public_key_der()?;
+        println!("Public key: {}\n\n", STANDARD.encode(der.as_ref()));
+
+        Ok(())
+    }
+
     pub async fn send_datagram_to_client(&mut self, 
-        listener: &UdpSocket, 
         recipient: &SocketAddr, 
         packet_type: u8,
         payload: &[u8]) -> anyhow::Result<()>{
@@ -42,105 +73,57 @@ impl Server {
             .ok_or_else(|| anyhow::anyhow!("recipient not found"))?;       
         
         connection.sequence_number += 1;
-
         let seq_bytes = connection.sequence_number.to_be_bytes();
-
         let uuid_bytes = *connection.uuid.as_bytes();
 
-        send_datagram(listener, recipient, packet_type, &seq_bytes, &uuid_bytes, payload).await;
+        send_datagram(&self.listener, recipient, packet_type, &seq_bytes, &uuid_bytes, payload).await;
 
         Ok(())
     }
 
+
+
+    async fn receive_connection(&mut self, buffer: [u8; 264], bytes_read: usize, sender_addr: SocketAddr) -> anyhow::Result<()> {
+
+        // for now, we say that the only types of packets the server receives are connection-syn
+        // this may change if we make it a two-way communication
+        validate_received_datagram(&buffer[..bytes_read], 0, packet_types::CONNECTION_SYN);
+
+        if (bytes_read < 264) {
+            println!("Invalid packet size for connection request");
+            return Ok(());
+        }
+
+        let encrypted_UUID = &buffer[8..264];
+        let UUID_bytes = self.private_key.decrypt(rsa::Pkcs1v15Encrypt, encrypted_UUID)?;
+        let uuid_string = std::str::from_utf8(&UUID_bytes)?;
+        let uuid = Uuid::parse_str(uuid_string)?;
+
+        let entry = self.connections.entry(sender_addr).or_insert(ConnectionState {
+            uuid,
+            sequence_number: 1, // just the syn
+        });
+
+        println!("UUID: {} \t\t address: {}", uuid, sender_addr);
+
+        // send an ack back.
+        entry.sequence_number += 1;
+        send_datagram(&self.listener, &sender_addr, packet_types::CONNECTION_ACK, &entry.sequence_number.to_be_bytes(), &[], &[]).await?;
+        Ok(())
+    }
+
     pub async fn run(&mut self) -> anyhow::Result<()> {
-        println!("Server is spinning up...\n\n");
-
-        let listener = UdpSocket::bind(format!("{}:{}", self.host, self.port)).await?;
-        println!("Address: {}:{}\n", self.host, self.port);
-
-        let mut rng = OsRng;
-        let private_key = RsaPrivateKey::new(&mut rng, 2048)?;
-        let public_key = RsaPublicKey::from(&private_key);
-
-        let der = public_key.to_public_key_der()?;
-        println!("Public key: {}\n\n", STANDARD.encode(der.as_ref()));
-
-        
-        println!("Connected to:\n");
-
+        println!("Listening for connections...\n");
 
         let mut buffer = [0u8; 264];
-
         let mut stdin_lines = BufReader::new(io::stdin()).lines();
 
         loop {
-
             tokio::select! {
-
-                result = listener.recv_from(&mut buffer) => {
+                
+                result = self.listener.recv_from(&mut buffer) => {
                     let (bytes_read, sender_addr) = result?;
-            
-                    let magic_bytes = &buffer[0..3];
-                    
-                    // println!("Received magic bytes: {:02X?} \nfrom {}", magic_bytes, sender_addr);
-
-                    if (magic_bytes != MAGIC_BYTES) {
-                        println!("Message not intended for us, discarding.");
-                        continue;
-                    }
-
-                    let packet_type = buffer[3];
-                    // println!("Received packet type: {:02X?}", packet_type);
-
-                    let sequence_number = u32::from_be_bytes(buffer[4..8].try_into()?);
-                    
-                    // println!("Received sequence number: {}", sequence_number);
-
-                    // here on out, the payload will be different depending on the packet type
-
-                    if (packet_type == packet_types::CONNECTION_SYN) {
-                        // first thing we check is that seq is 0
-                        if (sequence_number != 0) {
-                            println!("Invalid sequence number for initial connection");
-                            continue;
-                        }
-
-                        // its fine then. grab the uuid and decrypt it
-                        if (bytes_read < 264) {
-                            println!("Invalid packet size for connection request");
-                            continue;
-                        }
-                        let encrypted_UUID = &buffer[8..264];
-
-                        let UUID_bytes = private_key.decrypt(rsa::Pkcs1v15Encrypt, encrypted_UUID)?;
-
-                        let uuid_string = std::str::from_utf8(&UUID_bytes)?;
-                        let uuid = Uuid::parse_str(uuid_string)?;
-
-                        let entry = self.connections.entry(sender_addr).or_insert(ConnectionState {
-                            uuid,
-                            sequence_number: 1, // just the syn
-                        });
-
-                        println!("UUID: {} \t\t address: {}", uuid, sender_addr);
-
-                        
-                        // send an ack back.
-
-                        let mut frame: Vec<u8> = Vec::new();
-                        frame.extend_from_slice(&MAGIC_BYTES);
-                        frame.extend_from_slice(&[packet_types::CONNECTION_ACK]);
-                        frame.extend_from_slice(&entry.sequence_number.to_be_bytes());
-                        // that's kinda it, no payload for this one.
-
-
-                        // println!("Sending connection ack to {} with sequence number: {}", sender_addr, entry.sequence_number);
-                        // println!("Sending {:02X?} bytes to {}", frame, sender_addr);
-
-                        entry.sequence_number += 1; // sent the ack
-
-                        listener.send_to(&frame, sender_addr).await?;
-                    }
+                    self.receive_connection(buffer, bytes_read, sender_addr).await?;
                 }
 
                 line = stdin_lines.next_line() => {
@@ -148,10 +131,9 @@ impl Server {
                         println!("You typed {}", line);
 
                         let recipients: Vec<SocketAddr> = self.connections.keys().copied().collect();
-
                         for recipient in recipients {
                             // println!("Attempt to send to {}", recipient);
-                            self.send_datagram_to_client(&listener, &recipient, packet_types::MISC, line.as_bytes()).await;
+                            self.send_datagram_to_client(&recipient, packet_types::MISC, &line.as_bytes()).await;
                         }
                     }
                 }
