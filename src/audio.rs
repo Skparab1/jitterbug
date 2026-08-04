@@ -78,6 +78,8 @@ impl Audio {
             let _ = self.delete_file(loaded_track);
         }
 
+        println!("Loaded track: {}", loaded_track.video.title);
+
         Ok(())
     }
 
@@ -105,6 +107,8 @@ impl Audio {
 
         self.current = Some(next);
 
+        println!("Swapped in track: {}", self.current.as_ref().unwrap().video.title);
+
         Ok(())
     }
 
@@ -129,11 +133,13 @@ impl Audio {
     /// Pause the current track.
     pub fn pause(&self) {
         self.sink.pause();
+        println!("Paused track");
     }
 
-    /// Resume a paused track.
-    pub fn resume(&self) {
+    /// Play a track.
+    pub fn plau(&self) {
         self.sink.play();
+        println!("Played track");
     }
 
     fn sanitize_filename(title: &str) -> String {
