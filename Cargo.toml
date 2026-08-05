@@ -15,6 +15,10 @@ path = "src/bin/server.rs"
 name = "client"
 path = "src/bin/client.rs"
 
+[[bin]]
+name = "audiotest"
+path = "src/bin/audiotest.rs"
+
 [dependencies]
 anyhow = "1.0.103"
 tokio = { version = "1.52.3", features = ["full"] }
@@ -23,4 +27,4 @@ rand = "0.8"
 uuid = { version = "1.10", features = ["v4", "v7", "fast-rng"] }
 base64 = "0.22"
 yt-dlp = "2.8.0"
-rodio = "0.19"
+rodio = { version = "0.22.1" }

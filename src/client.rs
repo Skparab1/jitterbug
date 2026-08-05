@@ -119,8 +119,27 @@ impl Client {
             println!("Received datagram of type {} from {}", packet_text, sender_addr);
             println!("Payload was {}", decoded);
 
+            self.action_audio_instruction(packet_type, decoded).await?;
+
             self.sequence_number += 1;
         }
+    }
+
+    pub async fn action_audio_instruction(&mut self, packet_type: u8, payload: &str) -> anyhow::Result<()> {
+        if packet_type == packet_types::AUDIO_PLAY {
+            self.audio.play();
+        } else if packet_type == packet_types::AUDIO_PAUSE {
+            self.audio.pause();
+        } else if packet_type == packet_types::AUDIO_SWAP {
+            println!("Swapping audio track");
+            if let Err(err) = self.audio.swap() {
+                println!("audio swap failed: {err:#}");
+            }
+        } else if packet_type == packet_types::AUDIO_LOAD {
+            let _ = self.audio.load(payload).await;
+        }
+
+        return Ok(());
     }
 
     async fn send_message_bytes(&self, message_bytes: &[u8]) -> anyhow::Result<()> {
