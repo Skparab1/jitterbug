@@ -53,7 +53,7 @@ impl Audio {
     }   
 
     pub async fn load(&mut self, url: &str) -> Result<()> {
-        
+        println!("Loading ...");
         let video = self.downloader.fetch_video_infos(url.to_string())
             .await.context("failed to fetch video metadata")?;
         
@@ -62,12 +62,12 @@ impl Audio {
         let path = self.downloader.download_audio_stream(&video, &filename)
             .await.context("failed to download audio stream")?;
 
-        if self.current.is_some() {
+        if self.current.is_some() && self.loaded.is_some() {
             let loaded_track = self.loaded.take().unwrap();
             let current_track = self.current.take().unwrap();
 
             // if loaded and current are the same, then loaded
-            // has been loaded into current, so it will be deleted.
+            // has been loaded intlo current, so it will be deleted.
             if loaded_track.path != current_track.path {
                 // If something was loaded, but wasn't ever played, delete it
                 let _ = self.delete_file(loaded_track);
@@ -115,23 +115,9 @@ impl Audio {
         Ok(())
     }
 
-    pub fn play_test_file(&mut self) -> Result<()> {
-        let file = fs::File::open("./temp-assets/test.mp3")
-            .with_context(|| format!("failed to open ./temp-assets/test.mp3"))?;
-        
-        let decoder = Decoder::try_from(file)
-            .context("failed to decode audio file")?;
-
-        self.player.stop();
-        self.player.append(decoder);
-        self.player.play();
-
-        Ok(())
-    }
-
     fn discard_current_playback(&mut self) -> Result<()> {
         self.player.stop();
-        if (self.current.is_some()){
+        if self.current.is_some(){
             let current_track = self.current.take().unwrap();
             let _ = self.delete_file(current_track);
         }
