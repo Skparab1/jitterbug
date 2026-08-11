@@ -185,25 +185,26 @@ impl Server {
                         }
 
                         let mut send_packet_type = packet_types::MISC;
-                        let mut payload = "".as_bytes();
+                        let mut payload: Vec<u8> = Vec::new();
 
                         if line.starts_with("load ") {
                             send_packet_type = packet_types::AUDIO_LOAD;
-                            payload = line[5..].as_bytes();
+                            payload.extend_from_slice(&line[5..].as_bytes());
                         } else if line.starts_with("swap") {
                             send_packet_type = packet_types::AUDIO_SWAP;
                         } else if line.starts_with("play") {
                             send_packet_type = packet_types::AUDIO_PLAY;
                             // need to record the audio timestamp where to start playing
+                            
+                            let current_pos = self.audio.get_pos();
+                            let current_pos_bytes = current_pos.as_millis().to_be_bytes();
+                            payload.extend_from_slice(&current_pos_bytes);
 
-                            let current_pos = self.audio.player.get_pos();
-                            let pos_bytes = current_pos.as_millis().to_be_bytes();
-                            payload = &pos_bytes;
-
-                            // also need to tell the client when exactly to play
                             let play_time = std::time::SystemTime::now() + std::time::Duration::from_millis(500);
+
                             let play_time_millis = play_time.duration_since(std::time::UNIX_EPOCH)?.as_millis();
                             let play_time_bytes = play_time_millis.to_be_bytes();
+
                             payload.extend_from_slice(&play_time_bytes);
 
                         } else if line.starts_with("pause") {
@@ -235,10 +236,10 @@ impl Server {
                         } else if line.starts_with("swap") {
                             let _ = self.audio.swap();
                         } else if line.starts_with("play") {
-                            let to_set_timestamp = u128::from_be_bytes(payload[0..16].as_bytes().try_into()?);
-                            let when_to_play_timestamp = u128::from_be_bytes(payload[16..32].as_bytes().try_into()?);
+                            let to_set_timestamp = u128::from_be_bytes(payload[0..16].try_into().expect("slice with incorrect length"));
+                            let when_to_play_timestamp = u128::from_be_bytes(payload[16..32].try_into().expect("slice with incorrect length"));
                             
-                            self.audio.play_at(to_set_timestamp, when_to_play_timestamp).await?;
+                            self.audio.play_at(to_set_timestamp, when_to_play_timestamp).await;
 
                         } else if line.starts_with("pause") {
                             self.audio.pause();

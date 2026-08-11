@@ -108,32 +108,40 @@ impl Client {
         let mut buffer = [0u8; 264];
         loop {
             let (bytes_read, sender_addr) = self.receive_bytes(&mut buffer).await?;
+
+            println!("Received datagram of length {} from {}", bytes_read, sender_addr);
+
             let payload: Vec<u8> = extract_payload(&buffer[..bytes_read], self.sequence_number + 1, &self.uuid, packet_types::AUDIO_ANY).expect("Payload extraction failed");
 
-            let decoded: &str = std::str::from_utf8(&payload)?;
+            println!("Payload length: {}", payload.len());
 
             let packet_type = buffer[3];
             let packet_text = packet_type_to_text(packet_type);
 
             println!("Received datagram of type {} from {}", packet_text, sender_addr);
-            println!("Payload was {}", decoded);
 
             self.sequence_number += 1;
 
-            self.action_audio_instruction(packet_type, decoded).await?;
+            self.action_audio_instruction(packet_type, payload).await?;
         }
     }
 
-    pub async fn action_audio_instruction(&mut self, packet_type: u8, payload: &str) -> anyhow::Result<()> {
+    pub async fn action_audio_instruction(&mut self, packet_type: u8, payload: Vec<u8>) -> anyhow::Result<()> {
         if packet_type == packet_types::AUDIO_PLAY {
             // here, 32 bytes.
             // the first 16 bytes: what to set the rodio player timestamp to
             // the second 16: when exactly (unit timestamp wise) to play the audio
 
-            let to_set_timestamp = u128::from_be_bytes(payload[0..16].as_bytes().try_into()?);
-            let when_to_play_timestamp = u128::from_be_bytes(payload[16..32].as_bytes().try_into()?);
+
+
+            let to_set_timestamp = u128::from_be_bytes(payload[0..16].try_into()?);
+
+            println!("The timestamp to set the player to is: {}", to_set_timestamp);
+            let when_to_play_timestamp = u128::from_be_bytes(payload[16..32].try_into()?);
+
+            println!("The timestamp to play at is: {}", when_to_play_timestamp);
             
-            self.audio.play_at(to_set_timestamp, when_to_play_timestamp).await?;
+            self.audio.play_at(to_set_timestamp, when_to_play_timestamp).await;
 
         } else if packet_type == packet_types::AUDIO_PAUSE {
             self.audio.pause();
@@ -149,7 +157,9 @@ impl Client {
                 println!("audio swap failed: {err:#}");
             }
         } else if packet_type == packet_types::AUDIO_LOAD {
-            let _ = self.audio.load(payload).await;
+            let decoded: &str = std::str::from_utf8(&payload)?;
+
+            let _ = self.audio.load(decoded).await;
             // after it loads, send the ack.
 
             let frame = create_frame(packet_types::LOADED_ACK, &self.sequence_number.to_be_bytes(), self.uuid.as_bytes(), None).await?;

@@ -1,7 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
 use std::collections::VecDeque;
-use std::time::Duration;
  
 use anyhow::{Context, Result};
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player};
@@ -64,6 +63,10 @@ impl Audio {
             player
         })    
     }   
+
+    pub fn get_pos(&self) -> Duration {
+        self.player.get_pos()
+    }
 
     pub fn preflight_check(&mut self, action_type: u8) -> Result<bool>{
         if action_type == packet_types::AUDIO_SWAP {
@@ -164,13 +167,19 @@ impl Audio {
     }
 
     pub async fn play_at(&self, to_set_timestamp: u128, when_to_play_timestamp: u128){
+
+        println!("PlayAt invoked");
         
-        self.player.set_timestamp(to_set_timestamp);
+        self.player.try_seek(Duration::from_secs((to_set_timestamp / 1000) as u64));
+
+        println!("Seeked to: {} ms", to_set_timestamp);
 
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
             .as_millis();
+
+        println!("Now will wait until: {} ms", when_to_play_timestamp);
 
         if when_to_play_timestamp > now_ms {
             let ms_to_wait = (when_to_play_timestamp - now_ms) as u64;
@@ -180,7 +189,10 @@ impl Audio {
             sleep_until(deadline).await;
         }
 
+        println!("Wait time elapsed. Now playing...");
+
         self.play();
+
     }
 
     // Play a track
