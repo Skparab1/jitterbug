@@ -13,9 +13,7 @@ use std::net::SocketAddr;
 use uuid::Uuid;
 
 use crate::utils::{validate_received_datagram, send_datagram};
-
-
-
+use crate::audio::Audio;
 
 pub struct Server {
 
@@ -29,7 +27,9 @@ pub struct Server {
 
     // crypto
     private_key: RsaPrivateKey,
-    pub public_key: RsaPublicKey
+    pub public_key: RsaPublicKey,
+
+    audio: Audio,
 }
 
 impl Server {
@@ -41,6 +41,8 @@ impl Server {
         let listener = UdpSocket::bind(format!("{}:{}", SERVER_HOST, SERVER_PORT)).await.expect("Socket binding failed");
         let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("Private Key generation failed");
         let public_key = RsaPublicKey::from(&private_key);
+
+        let audio = Audio::new().await.expect("Initializing server side audio failed.");
         
         Self {
             host: SERVER_HOST.into(),
@@ -50,7 +52,9 @@ impl Server {
             // these are placeholders, will be overwritten later
             listener,
             private_key,
-            public_key
+            public_key,
+
+            audio,
         }
     }
 
@@ -149,11 +153,35 @@ impl Server {
                             send_packet_type = packet_types::AUDIO_PLAY;
                         } else if line.starts_with("pause") {
                             send_packet_type = packet_types::AUDIO_PAUSE;
+                        } else if line.starts_with("forward") {
+                            send_packet_type = packet_types::AUDIO_FWD;
+                        } else if line.starts_with("backward") {
+                            send_packet_type = packet_types::AUDIO_BACK;
+                        }
+
+                        if !self.audio.preflight_check(send_packet_type)? {
+                            println!("Command did not pass Audio's preflight checks");
+                            continue;
                         }
 
                         let recipients: Vec<SocketAddr> = self.connections.keys().copied().collect();
                         for recipient in recipients {
                             let _ = self.send_datagram_to_client(&recipient, send_packet_type, &payload).await;
+                        }
+
+                        // send it to our own audio module
+                        if line.starts_with("load ") {
+                            self.audio.load(line[5..].as_ref()).await?;
+                        } else if line.starts_with("swap") {
+                            let _ = self.audio.swap();
+                        } else if line.starts_with("play") {
+                            self.audio.play();
+                        } else if line.starts_with("pause") {
+                            self.audio.pause();
+                        } else if line.starts_with("forward") {
+                            self.audio.forward();
+                        } else if line.starts_with("backward") {
+                            self.audio.backward();
                         }
                     }
                 }

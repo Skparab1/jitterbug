@@ -130,6 +130,12 @@ impl Client {
             self.audio.play();
         } else if packet_type == packet_types::AUDIO_PAUSE {
             self.audio.pause();
+        } else if packet_type == packet_types::AUDIO_FWD {
+            self.audio.forward();
+        } else if packet_type == packet_types::AUDIO_BACK {
+            self.audio.backward();
+        } else if packet_type == packet_types::AUDIO_PAUSE {
+            self.audio.pause();
         } else if packet_type == packet_types::AUDIO_SWAP {
             println!("Swapping audio track");
             if let Err(err) = self.audio.swap() {
