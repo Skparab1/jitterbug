@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
  
 use anyhow::{Context, Result};
-use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
+use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player};
 use yt_dlp::model::Video;
 use yt_dlp::Downloader;
 
@@ -22,9 +22,8 @@ pub struct Audio {
     // loaded content (gets swapped in next)
     loaded: Option<Track>,
 
-    stream: OutputStream,
-    stream_handle: OutputStreamHandle,
-    sink: Sink
+    handle: MixerDeviceSink,
+    player: Player
 }
 
 impl Audio {
@@ -39,9 +38,8 @@ impl Audio {
             .await
             .context("failed to initialize yt-dlp downloader")?;
 
-        let (stream, stream_handle) =
-                OutputStream::try_default().context("failed to open default audio output device")?;
-        let sink = Sink::try_new(&stream_handle).context("failed to create audio sink")?;
+        let handle = DeviceSinkBuilder::open_default_sink()?;
+        let player = Player::connect_new(&handle.mixer());
 
         Ok(Self {
             downloader,
@@ -49,14 +47,13 @@ impl Audio {
             current: None,
             loaded: None,
 
-            stream,
-            stream_handle,
-            sink
+            handle,
+            player
         })    
     }   
 
     pub async fn load(&mut self, url: &str) -> Result<()> {
-        
+        println!("Loading ...");
         let video = self.downloader.fetch_video_infos(url.to_string())
             .await.context("failed to fetch video metadata")?;
         
@@ -65,18 +62,26 @@ impl Audio {
         let path = self.downloader.download_audio_stream(&video, &filename)
             .await.context("failed to download audio stream")?;
 
+        if self.current.is_some() && self.loaded.is_some() {
+            let loaded_track = self.loaded.take().unwrap();
+            let current_track = self.current.take().unwrap();
+
+            // if loaded and current are the same, then loaded
+            // has been loaded intlo current, so it will be deleted.
+            if loaded_track.path != current_track.path {
+                // If something was loaded, but wasn't ever played, delete it
+                let _ = self.delete_file(loaded_track);
+            }
+        }
+
+        println!("Loaded track: {}", video.title);
+
         self.loaded = Some(Track {
             video,
             path,
         });
 
-        let loaded_track = self.loaded.take().unwrap();
-        let current_track = self.current.take().unwrap();
 
-        if loaded_track.path != current_track.path {
-            // If something was loaded, but wasn't ever played, delete it
-            let _ = self.delete_file(loaded_track);
-        }
 
         Ok(())
     }
@@ -88,30 +93,34 @@ impl Audio {
         // 2. swap in the loaded video into the current
 
         // delete the current video and artifacts
+        
+        println!("Started audio swap");
+
 
         let next = self.loaded.take().context("no track preloaded")?;
 
         self.discard_current_playback()?;
 
-        let file = fs::File::open(&next.path)
-            .with_context(|| format!("failed to open {}", next.path.display()))?;
-        
-        let source = Decoder::new(std::io::BufReader::new(file))
-            .context("failed to decode audio file")?;
+        let file = std::fs::File::open(&next.path)?;
+        let decoder = Decoder::try_from(file)?;
 
-        self.sink.stop();
-        self.sink.append(source);
-        self.sink.pause();
+        self.player.stop();
+        self.player.append(decoder);
+        self.player.pause();
 
         self.current = Some(next);
+
+        println!("Swapped in track: {}", self.current.as_ref().unwrap().video.title);
 
         Ok(())
     }
 
     fn discard_current_playback(&mut self) -> Result<()> {
-        self.sink.stop();
-        let current_track = self.current.take().unwrap();
-        let _ = self.delete_file(current_track);
+        self.player.stop();
+        if self.current.is_some(){
+            let current_track = self.current.take().unwrap();
+            let _ = self.delete_file(current_track);
+        }
 
         Ok(())
     }
@@ -128,12 +137,14 @@ impl Audio {
 
     /// Pause the current track.
     pub fn pause(&self) {
-        self.sink.pause();
+        self.player.pause();
+        println!("Paused track");
     }
 
-    /// Resume a paused track.
-    pub fn resume(&self) {
-        self.sink.play();
+    /// Play a track.
+    pub fn play(&self) {
+        self.player.play();
+        println!("Played track");
     }
 
     fn sanitize_filename(title: &str) -> String {
