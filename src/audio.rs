@@ -11,6 +11,9 @@ use yt_dlp::Downloader;
 
 use crate::constants::{packet_types, OUTPUT_FILE_PATH};
 
+// Time syncing
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::time::{sleep_until, Duration, Instant};
 
 struct Track {
     title: String,
@@ -160,6 +163,26 @@ impl Audio {
         println!("Paused track");
     }
 
+    pub async fn play_at(&self, to_set_timestamp: u128, when_to_play_timestamp: u128){
+        
+        self.player.set_timestamp(to_set_timestamp);
+
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis();
+
+        if when_to_play_timestamp > now_ms {
+            let ms_to_wait = (when_to_play_timestamp - now_ms) as u64;
+            
+            // Map millisecond duration to Tokio's monotonic clock
+            let deadline = Instant::now() + Duration::from_millis(ms_to_wait);
+            sleep_until(deadline).await;
+        }
+
+        self.play();
+    }
+
     // Play a track
     pub fn play(&self) {
         self.player.play();
@@ -169,7 +192,7 @@ impl Audio {
     pub fn forward(&self){
         let current_pos = self.player.get_pos();
 
-        self.player.try_seek(current_pos + Duration::from_secs(5));
+        let _ = self.player.try_seek(current_pos + Duration::from_secs(5));
     }
 
     pub fn backward(&self){
@@ -177,7 +200,7 @@ impl Audio {
         // this is so that it never gets negative
         let new_pos = current_pos.saturating_sub(Duration::from_secs(5));
 
-        self.player.try_seek(new_pos);
+        let _ = self.player.try_seek(new_pos);
     }
 
 
