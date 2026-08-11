@@ -2,6 +2,7 @@
 use tokio::net::UdpSocket;
 use std::io;
 use uuid::Uuid;
+use crate::audio::Audio;
 
 // Crypto and encoding
 use rand::thread_rng;
@@ -11,7 +12,7 @@ use base64::Engine as _;
 
 // Constants and in-house utils
 use crate::constants::packet_types;
-use crate::utils::{create_frame, validate_received_datagram, extract_payload};
+use crate::utils::{create_frame, validate_received_datagram, extract_payload, packet_type_to_text};
 
 
 pub struct Client {
@@ -23,6 +24,9 @@ pub struct Client {
 
     // client variables
     sequence_number: u32,
+
+    // audio element
+    audio: Audio,
 }
 
 impl Client {
@@ -44,9 +48,10 @@ impl Client {
         let uuid = Uuid::new_v4();
         
         let socket = UdpSocket::bind("0.0.0.0:0").await?;
-        let local = socket.local_addr()?;
 
-        Ok( Self{ server_host: host, server_port: port, socket, uuid, sequence_number: 0} )
+        let audio = Audio::new().await?;
+
+        Ok( Self{ server_host: host, server_port: port, socket, uuid, sequence_number: 0, audio } )
     }
 
     pub async fn syn_handshake(&mut self) -> anyhow::Result<()> {
@@ -63,7 +68,7 @@ impl Client {
         // now wait for the response
 
         let mut buffer = [0u8; 264];
-        let (bytes_read, sender_addr) = self.receive_bytes(&mut buffer).await?;
+        let (bytes_read, _sender_addr) = self.receive_bytes(&mut buffer).await?;
 
         validate_received_datagram(&buffer[..bytes_read], self.sequence_number + 1, packet_types::CONNECTION_ACK);
 
@@ -104,19 +109,18 @@ impl Client {
         let mut buffer = [0u8; 264];
         loop {
             let (bytes_read, sender_addr) = self.receive_bytes(&mut buffer).await?;
-
-            println!("Received datagram from {}: {} bytes", sender_addr, bytes_read);
-
-            let payload: Vec<u8> = extract_payload(&buffer[..bytes_read], self.sequence_number + 1, &self.uuid, packet_types::MISC).expect("Payload extraction failed");
+            let payload: Vec<u8> = extract_payload(&buffer[..bytes_read], self.sequence_number + 1, &self.uuid, packet_types::AUDIO_ANY).expect("Payload extraction failed");
 
             let decoded: &str = std::str::from_utf8(&payload)?;
 
+            let packet_type = buffer[3];
+            let packet_text = packet_type_to_text(packet_type);
+
+            println!("Received datagram of type {} from {}", packet_text, sender_addr);
             println!("Payload was {}", decoded);
 
             self.sequence_number += 1;
         }
-
-        Ok(())
     }
 
     async fn send_message_bytes(&self, message_bytes: &[u8]) -> anyhow::Result<()> {

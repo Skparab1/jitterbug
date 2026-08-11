@@ -10,17 +10,27 @@ pub fn validate_received_datagram(
 ) -> bool {
 	// check magic bytes
 	let magic_bytes = &datagram[0..3];
-	if (magic_bytes != MAGIC_BYTES) {
+	if magic_bytes != MAGIC_BYTES {
 		println!("Message not intended for us, discarding.");
 		return false;
 	}
 
-    if (packet_type != datagram[3]){
+    if packet_type != datagram[3] && packet_type != packet_types::AUDIO_ANY {
         println!("Packet type does not match");
         return false;
     }
 
-	if (datagram.len() < 8){
+	if packet_type == packet_types::AUDIO_ANY && 
+		datagram[3] != packet_types::AUDIO_LOAD && 
+		datagram[3] != packet_types::AUDIO_SWAP && 
+		datagram[3] != packet_types::AUDIO_PLAY && 
+		datagram[3] != packet_types::AUDIO_PAUSE &&
+		datagram[3] != packet_types::MISC { // for now, we allow misc packets. This may change later.
+        println!("Packet type does not match");
+        return false;
+    }
+
+	if datagram.len() < 8 {
 		println!("Datagram too short");
 		return false;
 	}
@@ -35,7 +45,7 @@ pub fn validate_received_datagram(
 	
 	let sequence_number: u32 = u32::from_be_bytes(seq_bytes);
 
-	if (sequence_number != expected_seq){
+	if sequence_number != expected_seq {
 		println!("Sequence number of received datagram was not an increment.");
 		println!("Got {}, expected {}", sequence_number, expected_seq);
 		return false;
@@ -51,31 +61,31 @@ pub fn extract_payload(
 	expected_type: u8
 ) -> anyhow::Result<Vec<u8>> {
 	// first check whether it is well-formatted for us or not.
-	if (!validate_received_datagram(datagram, current_seq, expected_type)){
+	if !validate_received_datagram(datagram, current_seq, expected_type){
 		// return an error
 		return Err(anyhow::anyhow!("Invalid datagram received"))
 	}
 
 	// is it a connection syn or ack? if so, then it won't have a uuid as a part of the payload
 	let packet_type = datagram[3];
-	let mut payloadStart: usize = 8;
-	if (packet_type != packet_types::CONNECTION_SYN && 
-		packet_type != packet_types::CONNECTION_ACK){
+	let mut payload_start: usize = 8;
+	if packet_type != packet_types::CONNECTION_SYN && 
+		packet_type != packet_types::CONNECTION_ACK {
 		
 		// check the uuid
 		let received_uuid = &datagram[8..24];
 		let uuid_bytes = uuid_param.as_bytes();
 		// println!("Expected UUID: {:02X?}", uuid_bytes);
 		// println!("Received UUID: {:02X?}", received_uuid);
-		if (uuid_bytes != received_uuid){
+		if uuid_bytes != received_uuid {
 			return Err(anyhow::anyhow!("UUID does not match"))
 		}
 
-		payloadStart = 24;
+		payload_start = 24;
 	}
 
 	// Extract the payload from the datagram
-	let payload = &datagram[payloadStart..];
+	let payload = &datagram[payload_start..];
 	return Ok(payload.to_vec())
 }
 
@@ -92,7 +102,7 @@ pub async fn create_frame(
     frame.extend_from_slice(&[packet_type]);    
     frame.extend_from_slice(&sequence_number);
     frame.extend_from_slice(uuid_bytes);
-	if (payload.is_some()){
+	if payload.is_some(){
     	frame.extend_from_slice(&payload.unwrap());
 	}
 
@@ -112,4 +122,17 @@ pub async fn send_datagram(
 
     listener.send_to(&frame, recipient).await?;
     Ok(())
+}
+
+pub fn packet_type_to_text(packet_type: u8) -> &'static str {
+    match packet_type {
+        packet_types::CONNECTION_SYN => "Connection SYN",
+        packet_types::CONNECTION_ACK => "Connection ACK",
+        packet_types::MISC => "Misc",
+        packet_types::AUDIO_LOAD => "Audio Load",
+        packet_types::AUDIO_SWAP => "Audio Swap",
+        packet_types::AUDIO_PLAY => "Audio Play",
+        packet_types::AUDIO_PAUSE => "Audio Pause",
+        _ => "Unknown",
+    }
 }
