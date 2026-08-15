@@ -11,6 +11,7 @@ use crate::constants::{packet_types, ConnectionState, SERVER_HOST, SERVER_PORT};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use uuid::Uuid;
+use std::str::FromStr;
 
 use crate::utils::{validate_received_datagram, send_datagram};
 use crate::audio::Audio;
@@ -213,6 +214,10 @@ impl Server {
                             send_packet_type = packet_types::AUDIO_FWD;
                         } else if line.starts_with("backward") {
                             send_packet_type = packet_types::AUDIO_BACK;
+                        } else if line.starts_with("vol ") {
+                            send_packet_type = packet_types::AUDIO_VOL;
+                            let vol_level = u128::from_str(&line[4..]).expect("Invalid volume level");
+                            payload.extend_from_slice(&vol_level.to_be_bytes());
                         }
 
                         if !self.audio.preflight_check(send_packet_type)? {
@@ -247,6 +252,9 @@ impl Server {
                             self.audio.forward();
                         } else if line.starts_with("backward") {
                             self.audio.backward();
+                        } else if line.starts_with("vol ") {
+                            let vol_level = u128::from_str(&line[4..]).expect("Invalid volume level");
+                            self.audio.set_volume(vol_level);
                         }
                     }
                 }

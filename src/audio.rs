@@ -215,6 +215,11 @@ impl Audio {
         let _ = self.player.try_seek(new_pos);
     }
 
+    pub fn set_volume(&mut self, volume: u128) {
+        let volume = (volume as f32) / 100.0; // Convert to a value between 0.0 and 1.0
+        self.player.set_volume(volume);
+        println!("Volume set to: {}", volume);
+    }
 
     fn sanitize_filename(title: &str) -> String {
         title

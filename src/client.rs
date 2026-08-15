@@ -166,6 +166,9 @@ impl Client {
             self.send_message_bytes(&frame).await?;
 
             self.sequence_number += 1;
+        } else if packet_type == packet_types::AUDIO_VOL {
+            let vol_level = u128::from_be_bytes(payload[0..16].try_into()?);
+            self.audio.set_volume(vol_level);
         }
 
         return Ok(());

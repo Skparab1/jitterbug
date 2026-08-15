@@ -13,6 +13,7 @@ pub mod packet_types {
     pub const AUDIO_PAUSE: u8 = 0x14;
     pub const AUDIO_FWD: u8 = 0x15;
     pub const AUDIO_BACK: u8 = 0x16;
+    pub const AUDIO_VOL: u8 = 0x17;
 
     pub const LOADED_ACK: u8 = 0x20;
 }

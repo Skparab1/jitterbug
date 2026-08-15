@@ -27,6 +27,7 @@ pub fn validate_received_datagram(
 		datagram[3] != packet_types::AUDIO_PAUSE &&
 		datagram[3] != packet_types::AUDIO_FWD &&
 		datagram[3] != packet_types::AUDIO_BACK &&
+		datagram[3] != packet_types::AUDIO_VOL &&
 		datagram[3] != packet_types::MISC { // for now, we allow misc packets. This may change later.
         println!("Packet type does not match");
         return false;
