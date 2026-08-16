@@ -25,6 +25,9 @@ pub fn validate_received_datagram(
 		datagram[3] != packet_types::AUDIO_SWAP && 
 		datagram[3] != packet_types::AUDIO_PLAY && 
 		datagram[3] != packet_types::AUDIO_PAUSE &&
+		datagram[3] != packet_types::AUDIO_FWD &&
+		datagram[3] != packet_types::AUDIO_BACK &&
+		datagram[3] != packet_types::AUDIO_VOL &&
 		datagram[3] != packet_types::MISC { // for now, we allow misc packets. This may change later.
         println!("Packet type does not match");
         return false;
@@ -133,6 +136,8 @@ pub fn packet_type_to_text(packet_type: u8) -> &'static str {
         packet_types::AUDIO_SWAP => "Audio Swap",
         packet_types::AUDIO_PLAY => "Audio Play",
         packet_types::AUDIO_PAUSE => "Audio Pause",
+        packet_types::AUDIO_FWD => "Audio Forward",
+        packet_types::AUDIO_BACK => "Audio Back",
         _ => "Unknown",
     }
 }
