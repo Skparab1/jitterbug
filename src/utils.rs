@@ -70,16 +70,14 @@ pub fn extract_payload(
 		return None;
 	}    
 
-	let payload = content.len() > 5 ? &content[5] : &[]; // notably: not the same as none
-
-	return Some(payload);
+	return Some(content);
 }
 
 pub async fn create_frame(
 	cipher: &Aes128Gcm,
-	packet_type: u8,		 // 1 byte
-    sequence_number: &[u8],	 // 4 bytes
-    nonce: &[u8],            // 12 bytes
+	packet_type: u8,		 		// 1 byte
+    sequence_number: &[u8],	 		// 4 bytes
+    // nonce (this func generates)  // 12 bytes
     payload: Option<&[u8]>,  
 ) -> anyhow::Result<Vec<u8>> {
 	let mut frame: Vec<u8> = Vec::new();
@@ -88,6 +86,8 @@ pub async fn create_frame(
 	content.push(packet_type);
 	content.extend_from_slice(sequence_number);
 	content.extend_from_slice(payload.unwrap_or(&[]));
+
+	let nonce: Nonce = Nonce::generate();
 
 	cipher.encrypt_in_place(&nonce, b"", &mut content)?;
 

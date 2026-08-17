@@ -78,7 +78,17 @@ impl Client {
         let mut buffer = [0u8; 256];
         let (bytes_read, _sender_addr) = self.receive_bytes(&mut buffer).await?;
 
-        extract_payload(self.cipher, &buffer[..bytes_read], self.sequence_number + 1, packet_types::CONNECTION_ACK);
+        let response: Option<&[u8]> = extract_payload(self.cipher, &buffer[..bytes_read], self.sequence_number + 1, packet_types::CONNECTION_ACK);
+
+        if (response.is_none()) {
+            println!("Error: Handshake failed, internal");
+            return Err(anyhow::anyhow!("Error: Handshake failed, internal"));
+        }
+
+        if (response.unwrap() != nonce.as_slice()) {
+            println!("Error: Handshake failed, nonce mismatch");
+            return Err(anyhow::anyhow!("Error: Handshake failed, nonce mismatch"));
+        }
 
         println!("Connected!");
 
@@ -93,12 +103,10 @@ impl Client {
         // we generate a nonce
         let challenge_nonce: Vec<u8, 128> = Vec::new(Nonce::generate());
 
-        let encrypt_nonce = Nonce::generate();
-
         // construct the frame of the message
         let seq_bytes = self.sequence_number.to_be_bytes(); // 4 bytes
 
-        let frame = create_frame(self.cipher, packet_types::CONNECTION_SYN, &seq_bytes, &encrypt_nonce, Some(&challenge_nonce)).await?;
+        let frame = create_frame(self.cipher, packet_types::CONNECTION_SYN, &seq_bytes, Some(&challenge_nonce)).await?;
 
         self.send_message_bytes(&frame).await?;
 
@@ -116,18 +124,18 @@ impl Client {
 
             println!("Received datagram of length {} from {}", bytes_read, sender_addr);
 
-            let payload: Vec<u8> = extract_payload(&buffer[..bytes_read], self.sequence_number + 1, &self.uuid, packet_types::AUDIO_ANY).expect("Payload extraction failed");
+            let payload: Vec<u8> = extract_payload(self.cipher, &buffer[..bytes_read], self.sequence_number + 1, packet_types::AUDIO_ANY).expect("Payload extraction failed");
 
             println!("Payload length: {}", payload.len());
 
-            let packet_type = buffer[3];
+            let packet_type = payload[0];
             let packet_text = packet_type_to_text(packet_type);
 
             println!("Received datagram of type {} from {}", packet_text, sender_addr);
 
             self.sequence_number += 1;
 
-            self.action_audio_instruction(packet_type, payload).await?;
+            self.action_audio_instruction(packet_type, payload[5..]).await?;
         }
     }
 
@@ -136,8 +144,6 @@ impl Client {
             // here, 32 bytes.
             // the first 16 bytes: what to set the rodio player timestamp to
             // the second 16: when exactly (unit timestamp wise) to play the audio
-
-
 
             let to_set_timestamp = u128::from_be_bytes(payload[0..16].try_into()?);
 
@@ -167,7 +173,7 @@ impl Client {
             let _ = self.audio.load(decoded).await;
             // after it loads, send the ack.
 
-            let frame = create_frame(packet_types::LOADED_ACK, &self.sequence_number.to_be_bytes(), self.uuid.as_bytes(), None).await?;
+            let frame = create_frame(self.cipher, packet_types::LOADED_ACK, &self.sequence_number.to_be_bytes(), None).await?;
             self.send_message_bytes(&frame).await?;
 
             self.sequence_number += 1;
