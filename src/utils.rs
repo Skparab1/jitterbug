@@ -76,6 +76,7 @@ pub fn extract_payload(
 }
 
 pub async fn create_frame(
+	cipher: &Aes128Gcm,
 	packet_type: u8,		 // 1 byte
     sequence_number: &[u8],	 // 4 bytes
     nonce: &[u8],            // 12 bytes
@@ -83,13 +84,16 @@ pub async fn create_frame(
 ) -> anyhow::Result<Vec<u8>> {
 	let mut frame: Vec<u8> = Vec::new();
 
+	let mut content: Vec<u8> = Vec::new();
+	content.push(packet_type);
+	content.extend_from_slice(sequence_number);
+	content.extend_from_slice(payload.unwrap_or(&[]));
+
+	cipher.encrypt_in_place(&nonce, b"", &mut content)?;
+
 	frame.extend_from_slice(&MAGIC_BYTES);
-    frame.extend_from_slice(&[packet_type]);    
-    frame.extend_from_slice(&sequence_number);
     frame.extend_from_slice(nonce);
-	if payload.is_some(){
-    	frame.extend_from_slice(&payload.unwrap());
-	}
+	frame.extend_from_slice(&content);
 
 	Ok(frame)
 }
@@ -104,7 +108,7 @@ pub async fn send_datagram(
 ) -> anyhow::Result<()> {
 	let nonce = Nonce::generate();
     
-    let frame = create_frame(packet_type, sequence_number, nonce, Some(payload)).await?;
+    let frame = create_frame(cipher, packet_type, sequence_number, nonce, Some(payload)).await?;
 
     listener.send_to(&frame, recipient).await?;
     Ok(())

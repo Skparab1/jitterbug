@@ -5,24 +5,31 @@ use uuid::Uuid;
 use crate::audio::Audio;
 
 // Crypto and encoding
-use rand::thread_rng;
+use rand::{thread_rng, random};
 use rsa::{Pkcs1v15Encrypt, RsaPublicKey, pkcs8::DecodePublicKey};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 
 // Constants and in-house utils
 use crate::constants::packet_types;
-use crate::utils::{create_frame, validate_received_datagram, extract_payload, packet_type_to_text};
+use crate::utils::{create_frame, extract_payload, packet_type_to_text};
+
+use aes_gcm::{
+    aead::{Aead, AeadCore, Generate, Key, KeyInit},
+    Aes128Gcm, Nonce,
+};
 
 pub struct Client {
     // client constants
     server_host: String,
     server_port: u16,
     socket: UdpSocket,
-    uuid: Uuid,
 
     // client variables
     sequence_number: u32,
+
+    // cryptography
+    cipher: Aes128Gcm,
 
     // audio element
     audio: Audio,
@@ -42,34 +49,36 @@ impl Client {
         Self::connect(address, port).await
     }
 
+    // potentially reorganize into one function
+
     async fn connect(host: String, port: u16) -> anyhow::Result<Self> {
         let host = host.into();
-        let uuid = Uuid::new_v4();
-        
+
         let socket = UdpSocket::bind("0.0.0.0:0").await?;
 
         let audio = Audio::new().await?;
 
-        Ok( Self{ server_host: host, server_port: port, socket, uuid, sequence_number: 0, audio } )
+        println!("Please enter the public sharing key");
+        let mut input_key = String::new();
+        io::stdin().read_line(&mut input_key).expect("failed to readline");
+
+        let pre_shared_key: Key::<Aes128Gcm> = STANDARD.decode(input_key.trim().try_into()?)?;
+
+        let cipher = Aes256Gcm::new(&pre_shared_key);
+
+        Ok( Self{ server_host: host, server_port: port, socket, sequence_number: 0, cipher, audio } )
     }
 
     pub async fn syn_handshake(&mut self) -> anyhow::Result<()> {
-        println!("Please enter the server public key  >");
-        let mut input_key = String::new();	
-        io::stdin().read_line(&mut input_key).expect("failed to readline");
-
-        // we only need the public key once: for the handshake. Thus not stored as a field.
-        let der = STANDARD.decode(input_key.trim())?;
-        let public_key = RsaPublicKey::from_public_key_der(&der)?;
-
-        self.offer_handshake(public_key).await?;
+        
+        let nonce: Nonce = self.offer_handshake().await?;
 
         // now wait for the response
 
-        let mut buffer = [0u8; 264];
+        let mut buffer = [0u8; 256];
         let (bytes_read, _sender_addr) = self.receive_bytes(&mut buffer).await?;
 
-        validate_received_datagram(&buffer[..bytes_read], self.sequence_number + 1, packet_types::CONNECTION_ACK);
+        extract_payload(self.cipher, &buffer[..bytes_read], self.sequence_number + 1, packet_types::CONNECTION_ACK);
 
         println!("Connected!");
 
@@ -79,29 +88,25 @@ impl Client {
 
     }   
 
-    async fn offer_handshake(&mut self, public_key: RsaPublicKey) -> anyhow::Result<()> {
-        // first, we create our UUID payload
-        let data = self.uuid.to_string().into_bytes();
-        let mut rng = thread_rng();
-        let enc_data = public_key
-            .encrypt(&mut rng, Pkcs1v15Encrypt, &data[..])
-            .expect("Failed to encrypt data");
+    // we have this return the nonce, so that the upstream function can verify whatever is returned by the server.
+    async fn offer_handshake(&mut self) -> anyhow::Result<Nonce> {
+        // we generate a nonce
+        let challenge_nonce: Vec<u8, 128> = Vec::new(Nonce::generate());
+
+        let encrypt_nonce = Nonce::generate();
 
         // construct the frame of the message
-        let encrypted_key_bytes = enc_data.clone(); // the actual payload
-
         let seq_bytes = self.sequence_number.to_be_bytes(); // 4 bytes
 
-        let frame = create_frame(packet_types::CONNECTION_SYN, &seq_bytes, &encrypted_key_bytes, None).await?;
+        let frame = create_frame(self.cipher, packet_types::CONNECTION_SYN, &seq_bytes, &encrypt_nonce, Some(&challenge_nonce)).await?;
 
         self.send_message_bytes(&frame).await?;
 
         self.sequence_number += 1;
 
-        println!("\n\nYour UUID is: {}", self.uuid.to_string());
 	    println!("Connecting to server... ");
 
-        Ok(())
+        Ok(encrypt_nonce)
     }
 
     pub async fn receive_instructions(&mut self) -> anyhow::Result<()> {
