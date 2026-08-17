@@ -31,7 +31,8 @@ pub fn extract_payload(
 
 	// The content now contains packet type (1b), seq (4b), and payload.
 
-    if packet_type != content[0] && packet_type != packet_types::AUDIO_ANY {
+    if packet_type != content[0] && packet_type != packet_types::AUDIO_ANY &&
+		packet_type != packet_types::ANY {
         println!("Packet type does not match");
         return None;
     }

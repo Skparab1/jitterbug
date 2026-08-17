@@ -16,12 +16,13 @@ pub mod packet_types {
     pub const AUDIO_VOL: u8 = 0x17;
 
     pub const LOADED_ACK: u8 = 0x20;
+
+    pub const ANY: u8 = 0xFF; // currently unused wildcard
 }
 
-pub static MAGIC_BYTES: [u8; 3] = [0x67, 0xf2, 0x5a];
+pub static MAGIC_BYTES: [u8; 4] = [0x67, 0xf2, 0x5a, 0xb6];
 
 pub struct ConnectionState {
-    pub uuid: Uuid,
     pub sequence_number: u32,
     pub acked_signal: bool,
 }
