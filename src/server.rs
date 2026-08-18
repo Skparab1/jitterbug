@@ -210,8 +210,23 @@ impl Server {
                         } else if line.starts_with("backward") {
                             send_packet_type = packet_types::AUDIO_BACK;
                         } else if line.starts_with("vol ") {
+
                             send_packet_type = packet_types::AUDIO_VOL;
-                            let vol_level = u128::from_str(&line[4..]).expect("Invalid volume level");
+                            
+                            let vol_str = &line[4..];
+
+                            // I have entered a 0.5 too many times
+                            if vol_str.contains('.') {
+                                println!("Volume level cannot be a decimal.");
+                                continue;
+                            }
+
+                            let mut vol_level = u128::from_str(vol_str).expect("Invalid volume level");
+                            if (vol_level > 100) {
+                                println!("Volume level must be between 0 and 100");
+                                continue;
+                            }
+
                             payload.extend_from_slice(&vol_level.to_be_bytes());
                         }
 
