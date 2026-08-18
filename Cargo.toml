@@ -15,6 +15,10 @@ path = "src/bin/server.rs"
 name = "client"
 path = "src/bin/client.rs"
 
+[[bin]]
+name = "audiotest"
+path = "src/bin/audiotest.rs"
+
 [dependencies]
 anyhow = "1.0.103"
 tokio = { version = "1.52.3", features = ["full"] }
