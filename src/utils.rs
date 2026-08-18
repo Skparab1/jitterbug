@@ -1,33 +1,40 @@
 use crate::constants::{MAGIC_BYTES, packet_types};
-use uuid::Uuid;
 use tokio::net::UdpSocket;
 use std::net::SocketAddr;
 
 // common cryptography
 use aes_gcm::{
-    aead::{Aead, AeadCore, Generate, Key, KeyInit},
-    Aes128Gcm, Nonce,
+    aead::{AeadInOut, Generate},
+    Aes128Gcm,
 };
 
 pub fn extract_payload(
-	cipher: &Aes128Gcm,
-	datagram: &[u8],
-	expected_seq: u32,
-	packet_type: u8,
-) -> Option<&[u8]> {
-	// check magic bytes
+    cipher: &Aes128Gcm,
+    datagram: &[u8],
+    expected_seq: u32,
+    packet_type: u8,
+) -> Option<Vec<u8>> {
+
+	// length and magic byte checks
+	if datagram.len() < 16 {
+        println!("Datagram too short for nonce");
+        return None;
+    }
+
 	let magic_bytes = &datagram[0..4];
 	if magic_bytes != MAGIC_BYTES {
 		println!("Message not intended for us, discarding.");
 		return None;
 	}
 
+
 	// check the nonce. we will need this to decrypt
-	let nonce = &datagram[4..16];
+	let nonce_slice = &datagram[4..16];
+    let nonce = aes_gcm::aead::Nonce::<Aes128Gcm>::from_slice(nonce_slice);
 
-	let mut content = &datagram[16..];
-
-	cipher.decrypt_in_place(&nonce, b"", &mut content)?;
+	let mut content_vec = datagram[16..].to_vec();
+	let _ = cipher.decrypt_in_place(nonce, b"", &mut content_vec);
+	let content = &content_vec[..];
 
 	// The content now contains packet type (1b), seq (4b), and payload.
 
@@ -71,7 +78,7 @@ pub fn extract_payload(
 		return None;
 	}    
 
-	return Some(content);
+	return Some(content_vec);
 }
 
 pub async fn create_frame(
@@ -88,12 +95,12 @@ pub async fn create_frame(
 	content.extend_from_slice(sequence_number);
 	content.extend_from_slice(payload.unwrap_or(&[]));
 
-	let nonce: Nonce = Nonce::generate();
+	let nonce = aes_gcm::aead::Nonce::<Aes128Gcm>::generate();
 
 	cipher.encrypt_in_place(&nonce, b"", &mut content)?;
 
 	frame.extend_from_slice(&MAGIC_BYTES);
-    frame.extend_from_slice(nonce);
+    frame.extend_from_slice(&nonce);
 	frame.extend_from_slice(&content);
 
 	Ok(frame)
@@ -107,9 +114,8 @@ pub async fn send_datagram(
     sequence_number: &[u8],
     payload: &[u8],
 ) -> anyhow::Result<()> {
-	let nonce = Nonce::generate();
     
-    let frame = create_frame(cipher, packet_type, sequence_number, nonce, Some(payload)).await?;
+    let frame = create_frame(cipher, packet_type, sequence_number, Some(payload)).await?;
 
     listener.send_to(&frame, recipient).await?;
     Ok(())

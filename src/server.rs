@@ -4,24 +4,21 @@ use tokio::io::{self, BufReader, AsyncBufReadExt};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 
-use rsa::{RsaPrivateKey, RsaPublicKey, pkcs8::EncodePublicKey, rand_core::OsRng};
-
 use crate::constants::{packet_types, ConnectionState, SERVER_HOST, SERVER_PORT};
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use uuid::Uuid;
 use std::str::FromStr;
 
-use crate::utils::{validate_received_datagram, send_datagram};
+use crate::utils::{extract_payload, send_datagram};
 use crate::audio::Audio;
 
 
 // clean up the imports later
 
 use aes_gcm::{
-    aead::{Aead, AeadCore, Generate, Key, KeyInit},
-    Aes128Gcm, Nonce,
+    aead::{Generate, Key, KeyInit},
+    Aes128Gcm,
 };
 
 pub struct Server {
@@ -44,15 +41,17 @@ impl Server {
     pub async fn new() -> Self {
         println!("Server is spinning up...\n\n");
 
-        let mut rng = OsRng;
-
         let listener = UdpSocket::bind(format!("{}:{}", SERVER_HOST, SERVER_PORT)).await.expect("Socket binding failed");
 
         let pre_shared_key = Key::<Aes128Gcm>::generate();
-        let cipher = Aes256Gcm::new(&key);
+        let cipher = Aes128Gcm::new(&pre_shared_key);
 
         let audio = Audio::new().await.expect("Initializing server side audio failed.");
         
+        println!("Address: {}:{}\n", SERVER_HOST, SERVER_PORT);
+
+        println!("Pre-shared key: {}\n\n", STANDARD.encode(pre_shared_key));
+
         Self {
             host: SERVER_HOST.into(),
             port: SERVER_PORT,
@@ -63,15 +62,6 @@ impl Server {
 
             audio,
         }
-    }
-
-    pub async fn init(&mut self) -> anyhow::Result<()> {
-
-        println!("Address: {}:{}\n", self.host, self.port);
-
-        println!("Pre-shared key: {}\n\n", STANDARD.encode(self.pre_shared_key));
-
-        Ok(())
     }
 
     pub async fn send_datagram_to_client(&mut self, 
@@ -87,7 +77,7 @@ impl Server {
         connection.sequence_number += 1;
         let seq_bytes = connection.sequence_number.to_be_bytes();
 
-        let _ = send_datagram(self.cipher, &self.listener, recipient, packet_type, &seq_bytes, payload).await;
+        let _ = send_datagram(&self.cipher, &self.listener, recipient, packet_type, &seq_bytes, payload).await;
 
         Ok(())
     }
@@ -124,12 +114,12 @@ impl Server {
                 let rstate = state.unwrap();
 
                 // we don't care about the payload here
-                let _ = extract_payload(self.cipher, &buffer[..bytes_read], rstate.sequence_number, packet_types::LOADED_ACK);
+                let _ = extract_payload(&self.cipher, &buffer[..bytes_read], rstate.sequence_number, packet_types::LOADED_ACK);
 
                 rstate.acked_signal = true;
                 rstate.sequence_number += 1;
 
-                println!("Client {} has loaded the track.", rstate.uuid.to_string());
+                println!("Client {} has loaded the track.", sender_addr);
 
                 return Ok(())
             }
@@ -143,21 +133,29 @@ impl Server {
 
     async fn receive_connection(&mut self, buffer: [u8; 264], bytes_read: usize, sender_addr: SocketAddr) -> anyhow::Result<()> {
 
-        let content = extract_payload(self.cipher, &buffer[..bytes_read], 0, packet_types::CONNECTION_SYN);
+        let content = extract_payload(&self.cipher, &buffer[..bytes_read], 0, packet_types::CONNECTION_SYN);
 
-        let received_nonce = content[5..].to_vec();
+        if content.is_some(){
+            let unwrapped_content = content.unwrap();
 
-        let entry = self.connections.entry(sender_addr).or_insert(ConnectionState {
-            sequence_number: 1, // just the syn
-            acked_signal: false,
-        });
+            let received_nonce = unwrapped_content[5..].to_vec(); // the first 5 bytes are packet type and seq number, the rest is the nonce
 
-        println!("UUID: {} \t\t address: {}", uuid, sender_addr);
+            let entry = self.connections.entry(sender_addr).or_insert(ConnectionState {
+                sequence_number: 1, // just the syn
+                acked_signal: false,
+            });
 
-        // send an ack back.
-        entry.sequence_number += 1;
-        send_datagram(self.cipher, &self.listener, &sender_addr, packet_types::CONNECTION_ACK, &entry.sequence_number.to_be_bytes(), &received_nonce).await?;
-        Ok(())
+            println!("Connected to \t address: {}", sender_addr);
+
+            // send an ack back.
+            entry.sequence_number += 1;
+            send_datagram(&self.cipher, &self.listener, &sender_addr, packet_types::CONNECTION_ACK, &entry.sequence_number.to_be_bytes(), &received_nonce).await?;
+            Ok(())
+
+        } else {
+            println!("Error receiving connection");
+            Ok(())
+        }
     }
 
     pub async fn run(&mut self) -> anyhow::Result<()> {

@@ -1,5 +1,3 @@
-use uuid::Uuid;
-
 pub mod packet_types {
 	pub const CONNECTION_SYN: u8 = 0x00;
 	pub const CONNECTION_ACK: u8 = 0x01;
