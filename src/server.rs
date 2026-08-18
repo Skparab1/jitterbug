@@ -45,12 +45,12 @@ impl Server {
 
         let pre_shared_key = Key::<Aes128Gcm>::generate();
         let cipher = Aes128Gcm::new(&pre_shared_key);
-
-        let audio = Audio::new().await.expect("Initializing server side audio failed.");
         
         println!("Address: {}:{}\n", SERVER_HOST, SERVER_PORT);
 
         println!("Pre-shared key: {}\n\n", STANDARD.encode(pre_shared_key));
+
+        let audio = Audio::new().await.expect("Initializing server side audio failed.");
 
         Self {
             host: SERVER_HOST.into(),

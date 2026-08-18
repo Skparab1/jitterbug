@@ -53,8 +53,6 @@ impl Client {
 
         let socket = UdpSocket::bind("0.0.0.0:0").await?;
 
-        let audio = Audio::new().await?;
-
         println!("Please enter the public sharing key");
         let mut input_key = String::new();
         io::stdin().read_line(&mut input_key).expect("failed to readline");
@@ -64,6 +62,8 @@ impl Client {
         let pre_shared_key = Key::<Aes128Gcm>::from_slice(&decoded_bytes);
 
         let cipher = Aes128Gcm::new(pre_shared_key);
+
+        let audio = Audio::new().await?;
 
         Ok( Self{ server_host: host, server_port: port, socket, sequence_number: 0, cipher, audio } )
     }
