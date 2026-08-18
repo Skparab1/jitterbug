@@ -84,8 +84,12 @@ impl Client {
             return Err(anyhow::anyhow!("Error: Handshake failed, internal"));
         }
 
-        if response.unwrap() != nonce.as_slice() {
+        let got_nonce = &response.unwrap()[5..];
+
+        if got_nonce != nonce.as_slice() {
             println!("Error: Handshake failed, nonce mismatch");
+            println!("Expected: {:?}", nonce.as_slice());
+            println!("Received: {:?}", got_nonce);
             return Err(anyhow::anyhow!("Error: Handshake failed, nonce mismatch"));
         }
 
