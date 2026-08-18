@@ -1,28 +1,32 @@
 // Core
 use tokio::net::UdpSocket;
 use std::io;
-use uuid::Uuid;
 use crate::audio::Audio;
 
 // Crypto and encoding
-use rand::thread_rng;
-use rsa::{Pkcs1v15Encrypt, RsaPublicKey, pkcs8::DecodePublicKey};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 
 // Constants and in-house utils
 use crate::constants::packet_types;
-use crate::utils::{create_frame, validate_received_datagram, extract_payload, packet_type_to_text};
+use crate::utils::{create_frame, extract_payload, packet_type_to_text};
+
+use aes_gcm::{
+    aead::{ Generate, Key, KeyInit},
+    Aes128Gcm,
+};
 
 pub struct Client {
     // client constants
     server_host: String,
     server_port: u16,
     socket: UdpSocket,
-    uuid: Uuid,
 
     // client variables
     sequence_number: u32,
+
+    // cryptography
+    cipher: Aes128Gcm,
 
     // audio element
     audio: Audio,
@@ -42,34 +46,52 @@ impl Client {
         Self::connect(address, port).await
     }
 
+    // potentially reorganize into one function
+
     async fn connect(host: String, port: u16) -> anyhow::Result<Self> {
         let host = host.into();
-        let uuid = Uuid::new_v4();
-        
+
         let socket = UdpSocket::bind("0.0.0.0:0").await?;
 
         let audio = Audio::new().await?;
 
-        Ok( Self{ server_host: host, server_port: port, socket, uuid, sequence_number: 0, audio } )
+        println!("Please enter the public sharing key");
+        let mut input_key = String::new();
+        io::stdin().read_line(&mut input_key).expect("failed to readline");
+
+        let decoded_bytes: Vec<u8> = STANDARD.decode(input_key.trim())?;
+
+        let pre_shared_key = Key::<Aes128Gcm>::from_slice(&decoded_bytes);
+
+        let cipher = Aes128Gcm::new(pre_shared_key);
+
+        Ok( Self{ server_host: host, server_port: port, socket, sequence_number: 0, cipher, audio } )
     }
 
     pub async fn syn_handshake(&mut self) -> anyhow::Result<()> {
-        println!("Please enter the server public key  >");
-        let mut input_key = String::new();	
-        io::stdin().read_line(&mut input_key).expect("failed to readline");
-
-        // we only need the public key once: for the handshake. Thus not stored as a field.
-        let der = STANDARD.decode(input_key.trim())?;
-        let public_key = RsaPublicKey::from_public_key_der(&der)?;
-
-        self.offer_handshake(public_key).await?;
+        
+        let nonce = self.offer_handshake().await?;
 
         // now wait for the response
 
-        let mut buffer = [0u8; 264];
+        let mut buffer = [0u8; 256];
         let (bytes_read, _sender_addr) = self.receive_bytes(&mut buffer).await?;
 
-        validate_received_datagram(&buffer[..bytes_read], self.sequence_number + 1, packet_types::CONNECTION_ACK);
+        let response: Option<Vec<u8>> = extract_payload(&self.cipher, &buffer[..bytes_read], self.sequence_number + 1, packet_types::CONNECTION_ACK);
+
+        if response.is_none() {
+            println!("Error: Handshake failed, internal");
+            return Err(anyhow::anyhow!("Error: Handshake failed, internal"));
+        }
+
+        let got_nonce = &response.unwrap()[5..];
+
+        if got_nonce != nonce.as_slice() {
+            println!("Error: Handshake failed, nonce mismatch");
+            println!("Expected: {:?}", nonce.as_slice());
+            println!("Received: {:?}", got_nonce);
+            return Err(anyhow::anyhow!("Error: Handshake failed, nonce mismatch"));
+        }
 
         println!("Connected!");
 
@@ -79,29 +101,23 @@ impl Client {
 
     }   
 
-    async fn offer_handshake(&mut self, public_key: RsaPublicKey) -> anyhow::Result<()> {
-        // first, we create our UUID payload
-        let data = self.uuid.to_string().into_bytes();
-        let mut rng = thread_rng();
-        let enc_data = public_key
-            .encrypt(&mut rng, Pkcs1v15Encrypt, &data[..])
-            .expect("Failed to encrypt data");
+    // we have this return the nonce, so that the upstream function can verify whatever is returned by the server.
+    async fn offer_handshake(&mut self) -> anyhow::Result<aes_gcm::aead::Nonce<Aes128Gcm>> {
+        // we generate a nonce
+        let challenge_nonce = aes_gcm::aead::Nonce::<Aes128Gcm>::generate();
 
         // construct the frame of the message
-        let encrypted_key_bytes = enc_data.clone(); // the actual payload
-
         let seq_bytes = self.sequence_number.to_be_bytes(); // 4 bytes
 
-        let frame = create_frame(packet_types::CONNECTION_SYN, &seq_bytes, &encrypted_key_bytes, None).await?;
+        let frame = create_frame(&self.cipher, packet_types::CONNECTION_SYN, &seq_bytes, Some(challenge_nonce.as_slice())).await?;
 
         self.send_message_bytes(&frame).await?;
 
         self.sequence_number += 1;
 
-        println!("\n\nYour UUID is: {}", self.uuid.to_string());
 	    println!("Connecting to server... ");
 
-        Ok(())
+        Ok(challenge_nonce)
     }
 
     pub async fn receive_instructions(&mut self) -> anyhow::Result<()> {
@@ -111,20 +127,25 @@ impl Client {
 
             println!("Received datagram of length {} from {}", bytes_read, sender_addr);
 
-            let payload: Vec<u8> = extract_payload(&buffer[..bytes_read], self.sequence_number + 1, &self.uuid, packet_types::AUDIO_ANY).expect("Payload extraction failed");
+            let response: Option<Vec<u8>> = extract_payload(&self.cipher, &buffer[..bytes_read], self.sequence_number + 1, packet_types::AUDIO_ANY);
 
-            println!("Payload length: {}", payload.len());
+            if response.is_some() {
+                let payload = response.unwrap();
+                
+                println!("Payload length: {}", payload.len());
 
-            let packet_type = buffer[3];
-            let packet_text = packet_type_to_text(packet_type);
+                let packet_type = payload[0];
+                let packet_text = packet_type_to_text(packet_type);
 
-            println!("Received datagram of type {} from {}", packet_text, sender_addr);
+                println!("Received datagram of type {} from {}", packet_text, sender_addr);
 
-            self.action_audio_instruction(packet_type, decoded).await?;
+                self.sequence_number += 1;
 
-            self.sequence_number += 1;
-
-            self.action_audio_instruction(packet_type, payload).await?;
+                self.action_audio_instruction(packet_type, payload[5..].to_vec()).await?;
+           
+            } else {
+                println!("Error: Failed to extract payload from datagram");
+            }        
         }
     }
 
@@ -133,8 +154,6 @@ impl Client {
             // here, 32 bytes.
             // the first 16 bytes: what to set the rodio player timestamp to
             // the second 16: when exactly (unit timestamp wise) to play the audio
-
-
 
             let to_set_timestamp = u128::from_be_bytes(payload[0..16].try_into()?);
 
@@ -164,7 +183,7 @@ impl Client {
             let _ = self.audio.load(decoded).await;
             // after it loads, send the ack.
 
-            let frame = create_frame(packet_types::LOADED_ACK, &self.sequence_number.to_be_bytes(), self.uuid.as_bytes(), None).await?;
+            let frame = create_frame(&self.cipher, packet_types::LOADED_ACK, &self.sequence_number.to_be_bytes(), None).await?;
             self.send_message_bytes(&frame).await?;
 
             self.sequence_number += 1;

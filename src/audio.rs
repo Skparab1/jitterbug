@@ -170,7 +170,7 @@ impl Audio {
 
         println!("PlayAt invoked");
         
-        self.player.try_seek(Duration::from_secs((to_set_timestamp / 1000) as u64));
+        let _ = self.player.try_seek(Duration::from_secs((to_set_timestamp / 1000) as u64));
 
         println!("Seeked to: {} ms", to_set_timestamp);
 

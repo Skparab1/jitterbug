@@ -4,17 +4,22 @@ use tokio::io::{self, BufReader, AsyncBufReadExt};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 
-use rsa::{RsaPrivateKey, RsaPublicKey, pkcs8::EncodePublicKey, rand_core::OsRng};
-
 use crate::constants::{packet_types, ConnectionState, SERVER_HOST, SERVER_PORT};
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use uuid::Uuid;
 use std::str::FromStr;
 
-use crate::utils::{validate_received_datagram, send_datagram};
+use crate::utils::{extract_payload, send_datagram};
 use crate::audio::Audio;
+
+
+// clean up the imports later
+
+use aes_gcm::{
+    aead::{Generate, Key, KeyInit},
+    Aes128Gcm,
+};
 
 pub struct Server {
 
@@ -27,8 +32,7 @@ pub struct Server {
     pub listener: UdpSocket,
 
     // crypto
-    private_key: RsaPrivateKey,
-    pub public_key: RsaPublicKey,
+    pub cipher: Aes128Gcm,
 
     audio: Audio,
 }
@@ -37,37 +41,27 @@ impl Server {
     pub async fn new() -> Self {
         println!("Server is spinning up...\n\n");
 
-        let mut rng = OsRng;
-
         let listener = UdpSocket::bind(format!("{}:{}", SERVER_HOST, SERVER_PORT)).await.expect("Socket binding failed");
-        let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("Private Key generation failed");
-        let public_key = RsaPublicKey::from(&private_key);
+
+        let pre_shared_key = Key::<Aes128Gcm>::generate();
+        let cipher = Aes128Gcm::new(&pre_shared_key);
 
         let audio = Audio::new().await.expect("Initializing server side audio failed.");
         
+        println!("Address: {}:{}\n", SERVER_HOST, SERVER_PORT);
+
+        println!("Pre-shared key: {}\n\n", STANDARD.encode(pre_shared_key));
+
         Self {
             host: SERVER_HOST.into(),
             port: SERVER_PORT,
             connections: HashMap::new(),
 
-            // these are placeholders, will be overwritten later
             listener,
-            private_key,
-            public_key,
+            cipher,
 
             audio,
         }
-    }
-
-    pub async fn init(&mut self) -> anyhow::Result<()> {
-
-        println!("Address: {}:{}\n", self.host, self.port);
-
-        let der = self.public_key.to_public_key_der()?;
-        println!("Public key: {}\n\n", STANDARD.encode(der.as_ref()));
-
-
-        Ok(())
     }
 
     pub async fn send_datagram_to_client(&mut self, 
@@ -82,9 +76,8 @@ impl Server {
         
         connection.sequence_number += 1;
         let seq_bytes = connection.sequence_number.to_be_bytes();
-        let uuid_bytes = *connection.uuid.as_bytes();
 
-        let _ = send_datagram(&self.listener, recipient, packet_type, &seq_bytes, &uuid_bytes, payload).await;
+        let _ = send_datagram(&self.cipher, &self.listener, recipient, packet_type, &seq_bytes, payload).await;
 
         Ok(())
     }
@@ -92,17 +85,20 @@ impl Server {
 
     async fn process_received_datagram(&mut self, buffer: [u8; 264], bytes_read: usize, sender_addr: SocketAddr) -> anyhow::Result<()> {
         
-        // determine the received datagram type
-        let datagram_type: u8 = buffer[3];
+        // so we know the address right
+        // based on that we can predict
+        // whether it should be a connection syn
+        // or a loaded ack or something else
 
-        if datagram_type == packet_types::CONNECTION_SYN {
+        if !self.connections.contains_key(&sender_addr){
+            // likely a connection syn 
+            // we treat it as one
             println!("Received connection request from {}", sender_addr);
             self.receive_connection(buffer, bytes_read, sender_addr).await?;
-        } else if datagram_type == packet_types::LOADED_ACK {
-            // report that the client has loaded
-            self.receive_loaded_ack(buffer, bytes_read, sender_addr).await?;
+
         } else {
-            println!("Received datagram of unexpected type");
+            // almost certainly a loaded ack.            
+            self.receive_loaded_ack(buffer, bytes_read, sender_addr).await?;
         }
 
         Ok(())
@@ -116,11 +112,14 @@ impl Server {
             let state: Option<&mut ConnectionState> = self.connections.get_mut(&sender_addr);
             if state.is_some() {
                 let rstate = state.unwrap();
-                validate_received_datagram(&buffer[..bytes_read], rstate.sequence_number, packet_types::LOADED_ACK);
+
+                // we don't care about the payload here
+                let _ = extract_payload(&self.cipher, &buffer[..bytes_read], rstate.sequence_number, packet_types::LOADED_ACK);
+
                 rstate.acked_signal = true;
                 rstate.sequence_number += 1;
 
-                println!("Client {} has loaded the track.", rstate.uuid.to_string());
+                println!("Client {} has loaded the track.", sender_addr);
 
                 return Ok(())
             }
@@ -134,33 +133,29 @@ impl Server {
 
     async fn receive_connection(&mut self, buffer: [u8; 264], bytes_read: usize, sender_addr: SocketAddr) -> anyhow::Result<()> {
 
-        // for now, we say that the only types of packets the server receives are connection-syn
-        // this may change if we make it a two-way communication
-        println!("in the func from {}", sender_addr);
-        validate_received_datagram(&buffer[..bytes_read], 0, packet_types::CONNECTION_SYN);
+        let content = extract_payload(&self.cipher, &buffer[..bytes_read], 0, packet_types::CONNECTION_SYN);
 
-        if bytes_read < 264 {
-            println!("Invalid packet size for connection request");
-            return Ok(());
+        if content.is_some(){
+            let unwrapped_content = content.unwrap();
+
+            let received_nonce = unwrapped_content[5..].to_vec(); // the first 5 bytes are packet type and seq number, the rest is the nonce
+
+            let entry = self.connections.entry(sender_addr).or_insert(ConnectionState {
+                sequence_number: 1, // just the syn
+                acked_signal: false,
+            });
+
+            println!("Connected to \t address: {}", sender_addr);
+
+            // send an ack back.
+            entry.sequence_number += 1;
+            send_datagram(&self.cipher, &self.listener, &sender_addr, packet_types::CONNECTION_ACK, &entry.sequence_number.to_be_bytes(), &received_nonce).await?;
+            Ok(())
+
+        } else {
+            println!("Error receiving connection");
+            Ok(())
         }
-
-        let encrypted_uuid = &buffer[8..264];
-        let uuid_bytes = self.private_key.decrypt(rsa::Pkcs1v15Encrypt, encrypted_uuid)?;
-        let uuid_string = std::str::from_utf8(&uuid_bytes)?;
-        let uuid = Uuid::parse_str(uuid_string)?;
-
-        let entry = self.connections.entry(sender_addr).or_insert(ConnectionState {
-            uuid,
-            sequence_number: 1, // just the syn
-            acked_signal: false,
-        });
-
-        println!("UUID: {} \t\t address: {}", uuid, sender_addr);
-
-        // send an ack back.
-        entry.sequence_number += 1;
-        send_datagram(&self.listener, &sender_addr, packet_types::CONNECTION_ACK, &entry.sequence_number.to_be_bytes(), &[], &[]).await?;
-        Ok(())
     }
 
     pub async fn run(&mut self) -> anyhow::Result<()> {
@@ -215,8 +210,23 @@ impl Server {
                         } else if line.starts_with("backward") {
                             send_packet_type = packet_types::AUDIO_BACK;
                         } else if line.starts_with("vol ") {
+
                             send_packet_type = packet_types::AUDIO_VOL;
-                            let vol_level = u128::from_str(&line[4..]).expect("Invalid volume level");
+                            
+                            let vol_str = &line[4..];
+
+                            // I have entered a 0.5 too many times
+                            if vol_str.contains('.') {
+                                println!("Volume level cannot be a decimal.");
+                                continue;
+                            }
+
+                            let mut vol_level = u128::from_str(vol_str).expect("Invalid volume level");
+                            if (vol_level > 100) {
+                                println!("Volume level must be between 0 and 100");
+                                continue;
+                            }
+
                             payload.extend_from_slice(&vol_level.to_be_bytes());
                         }
 
