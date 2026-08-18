@@ -11,11 +11,10 @@ use crate::constants::{packet_types, ConnectionState, SERVER_HOST, SERVER_PORT};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use uuid::Uuid;
+use std::str::FromStr;
 
 use crate::utils::{validate_received_datagram, send_datagram};
-
-
-
+use crate::audio::Audio;
 
 pub struct Server {
 
@@ -29,7 +28,9 @@ pub struct Server {
 
     // crypto
     private_key: RsaPrivateKey,
-    pub public_key: RsaPublicKey
+    pub public_key: RsaPublicKey,
+
+    audio: Audio,
 }
 
 impl Server {
@@ -41,6 +42,8 @@ impl Server {
         let listener = UdpSocket::bind(format!("{}:{}", SERVER_HOST, SERVER_PORT)).await.expect("Socket binding failed");
         let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("Private Key generation failed");
         let public_key = RsaPublicKey::from(&private_key);
+
+        let audio = Audio::new().await.expect("Initializing server side audio failed.");
         
         Self {
             host: SERVER_HOST.into(),
@@ -50,7 +53,9 @@ impl Server {
             // these are placeholders, will be overwritten later
             listener,
             private_key,
-            public_key
+            public_key,
+
+            audio,
         }
     }
 
@@ -85,11 +90,53 @@ impl Server {
     }
 
 
+    async fn process_received_datagram(&mut self, buffer: [u8; 264], bytes_read: usize, sender_addr: SocketAddr) -> anyhow::Result<()> {
+        
+        // determine the received datagram type
+        let datagram_type: u8 = buffer[3];
+
+        if datagram_type == packet_types::CONNECTION_SYN {
+            println!("Received connection request from {}", sender_addr);
+            self.receive_connection(buffer, bytes_read, sender_addr).await?;
+        } else if datagram_type == packet_types::LOADED_ACK {
+            // report that the client has loaded
+            self.receive_loaded_ack(buffer, bytes_read, sender_addr).await?;
+        } else {
+            println!("Received datagram of unexpected type");
+        }
+
+        Ok(())
+    }
+
+    async fn receive_loaded_ack(&mut self, buffer: [u8; 264], bytes_read: usize, sender_addr: SocketAddr) -> anyhow::Result<()> {
+
+        // figure out which connection it is 
+
+        if self.connections.contains_key(&sender_addr){
+            let state: Option<&mut ConnectionState> = self.connections.get_mut(&sender_addr);
+            if state.is_some() {
+                let rstate = state.unwrap();
+                validate_received_datagram(&buffer[..bytes_read], rstate.sequence_number, packet_types::LOADED_ACK);
+                rstate.acked_signal = true;
+                rstate.sequence_number += 1;
+
+                println!("Client {} has loaded the track.", rstate.uuid.to_string());
+
+                return Ok(())
+            }
+        }
+
+        println!("Received a loaded ack datagram from an unregistered client");
+
+        Ok(())
+    }
+
 
     async fn receive_connection(&mut self, buffer: [u8; 264], bytes_read: usize, sender_addr: SocketAddr) -> anyhow::Result<()> {
 
         // for now, we say that the only types of packets the server receives are connection-syn
         // this may change if we make it a two-way communication
+        println!("in the func from {}", sender_addr);
         validate_received_datagram(&buffer[..bytes_read], 0, packet_types::CONNECTION_SYN);
 
         if bytes_read < 264 {
@@ -105,6 +152,7 @@ impl Server {
         let entry = self.connections.entry(sender_addr).or_insert(ConnectionState {
             uuid,
             sequence_number: 1, // just the syn
+            acked_signal: false,
         });
 
         println!("UUID: {} \t\t address: {}", uuid, sender_addr);
@@ -126,7 +174,7 @@ impl Server {
                 
                 result = self.listener.recv_from(&mut buffer) => {
                     let (bytes_read, sender_addr) = result?;
-                    self.receive_connection(buffer, bytes_read, sender_addr).await?;
+                    self.process_received_datagram(buffer, bytes_read, sender_addr).await?;
                 }
 
                 line = stdin_lines.next_line() => {
@@ -138,22 +186,75 @@ impl Server {
                         }
 
                         let mut send_packet_type = packet_types::MISC;
-                        let mut payload = "".as_bytes();
+                        let mut payload: Vec<u8> = Vec::new();
 
                         if line.starts_with("load ") {
                             send_packet_type = packet_types::AUDIO_LOAD;
-                            payload = line[5..].as_bytes();
+                            payload.extend_from_slice(&line[5..].as_bytes());
                         } else if line.starts_with("swap") {
                             send_packet_type = packet_types::AUDIO_SWAP;
                         } else if line.starts_with("play") {
                             send_packet_type = packet_types::AUDIO_PLAY;
+                            // need to record the audio timestamp where to start playing
+                            
+                            let current_pos = self.audio.get_pos();
+                            let current_pos_bytes = current_pos.as_millis().to_be_bytes();
+                            payload.extend_from_slice(&current_pos_bytes);
+
+                            let play_time = std::time::SystemTime::now() + std::time::Duration::from_millis(500);
+
+                            let play_time_millis = play_time.duration_since(std::time::UNIX_EPOCH)?.as_millis();
+                            let play_time_bytes = play_time_millis.to_be_bytes();
+
+                            payload.extend_from_slice(&play_time_bytes);
+
                         } else if line.starts_with("pause") {
                             send_packet_type = packet_types::AUDIO_PAUSE;
+                        } else if line.starts_with("forward") {
+                            send_packet_type = packet_types::AUDIO_FWD;
+                        } else if line.starts_with("backward") {
+                            send_packet_type = packet_types::AUDIO_BACK;
+                        } else if line.starts_with("vol ") {
+                            send_packet_type = packet_types::AUDIO_VOL;
+                            let vol_level = u128::from_str(&line[4..]).expect("Invalid volume level");
+                            payload.extend_from_slice(&vol_level.to_be_bytes());
+                        }
+
+                        if !self.audio.preflight_check(send_packet_type)? {
+                            println!("Command did not pass Audio's preflight checks");
+                            continue;
                         }
 
                         let recipients: Vec<SocketAddr> = self.connections.keys().copied().collect();
                         for recipient in recipients {
                             let _ = self.send_datagram_to_client(&recipient, send_packet_type, &payload).await;
+                            let state = self.connections.get_mut(&recipient);
+
+                            if state.is_some(){
+                                state.unwrap().acked_signal = false;
+                            }
+                        }
+
+                        // send it to our own audio module
+                        if line.starts_with("load ") {
+                            self.audio.load(line[5..].as_ref()).await?;
+                        } else if line.starts_with("swap") {
+                            let _ = self.audio.swap();
+                        } else if line.starts_with("play") {
+                            let to_set_timestamp = u128::from_be_bytes(payload[0..16].try_into().expect("slice with incorrect length"));
+                            let when_to_play_timestamp = u128::from_be_bytes(payload[16..32].try_into().expect("slice with incorrect length"));
+                            
+                            self.audio.play_at(to_set_timestamp, when_to_play_timestamp).await;
+
+                        } else if line.starts_with("pause") {
+                            self.audio.pause();
+                        } else if line.starts_with("forward") {
+                            self.audio.forward();
+                        } else if line.starts_with("backward") {
+                            self.audio.backward();
+                        } else if line.starts_with("vol ") {
+                            let vol_level = u128::from_str(&line[4..]).expect("Invalid volume level");
+                            self.audio.set_volume(vol_level);
                         }
                     }
                 }
