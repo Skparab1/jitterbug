@@ -45,6 +45,8 @@ impl Audio {
         .build()
         .await?;
         
+        downloader.update_downloader().await?;
+
         let handle = DeviceSinkBuilder::open_default_sink()?;
         let player = Player::connect_new(&handle.mixer());
 
