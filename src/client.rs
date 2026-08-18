@@ -120,6 +120,8 @@ impl Client {
 
             println!("Received datagram of type {} from {}", packet_text, sender_addr);
 
+            self.action_audio_instruction(packet_type, decoded).await?;
+
             self.sequence_number += 1;
 
             self.action_audio_instruction(packet_type, payload).await?;
