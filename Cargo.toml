@@ -31,3 +31,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false }
 rodio = { version = "0.22.1" }
 aes-gcm = "0.11.0"
+rustube = "0.6.0"
+rusty_ytdl = "0.7.4"
+rustytdown = "0.1.0"
