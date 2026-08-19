@@ -9,7 +9,7 @@ use yt_dlp::model::Video;
 use yt_dlp::model::selector::{AudioQuality, AudioCodecPreference};
 use yt_dlp::Downloader;
 
-use crate::constants::{packet_types, OUTPUT_FILE_PATH};
+use crate::constants::{packet_types};
 
 // Time syncing
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -31,13 +31,14 @@ pub struct Audio {
     queue: VecDeque<Track>,
 
     handle: MixerDeviceSink,
-    player: Player
+    player: Player,
+    output_file_path: String,
 }
 
 impl Audio {
-    pub async fn new() -> Result<Self> {
+    pub async fn new(output_file_path: String) -> Result<Self> {
         let libs_dir = PathBuf::from("libs");
-        let output_dir = PathBuf::from(OUTPUT_FILE_PATH);
+        let output_dir = PathBuf::from(&output_file_path);
 
 
         let downloader = Downloader::with_new_binaries(libs_dir.clone(), output_dir.clone())
@@ -46,7 +47,6 @@ impl Audio {
         .build()
         .await?;
         
-        downloader.update_downloader().await?;
 
         let handle = DeviceSinkBuilder::open_default_sink()?;
         let player = Player::connect_new(&handle.mixer());
@@ -60,7 +60,9 @@ impl Audio {
             queue,
 
             handle,
-            player
+            player,
+            
+            output_file_path,
         })    
     }   
 
@@ -90,7 +92,7 @@ impl Audio {
         let title = video.title.clone();
         let duration = video.duration;
 
-        let output_dir = PathBuf::from(OUTPUT_FILE_PATH);
+        let output_dir = PathBuf::from(self.output_file_path.clone());
         fs::create_dir_all(&output_dir)?;
 
         let output_template = output_dir.join("%(id)s.%(ext)s");

@@ -61,7 +61,7 @@ impl Client {
         let server_host = host.to_string();
         let server_port = port.parse::<u16>().expect("Failed to parse port from sharing key");
 
-        let audio = Audio::new().await?;
+        let audio = Audio::new("client-temp-assets".to_string()).await?;
 
         Ok( Self{ server_host, server_port, socket, sequence_number: 0, cipher, audio } )
     }
