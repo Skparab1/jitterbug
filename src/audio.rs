@@ -1,12 +1,9 @@
 use std::fs;
 use std::path::PathBuf;
 use std::collections::VecDeque;
-use std::io::Read;
  
 use anyhow::{Context, Result};
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player};
-use yt_dlp::model::Video;
-use yt_dlp::model::selector::{AudioQuality, AudioCodecPreference};
 use yt_dlp::Downloader;
 
 use crate::constants::{packet_types};
@@ -88,7 +85,7 @@ impl Audio {
         let video = self.downloader.fetch_video_infos(url.to_string())
             .await.context("failed to fetch video metadata")?;
         
-        let video_id = &video.id;
+        let _video_id = &video.id;
         let title = video.title.clone();
         let duration = video.duration;
 

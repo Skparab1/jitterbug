@@ -22,15 +22,7 @@ path = "src/bin/audiotest.rs"
 [dependencies]
 anyhow = "1.0.103"
 tokio = { version = "1.52.3", features = ["full"] }
-rsa = "0.9"
-rand = "0.8"
-uuid = { version = "1.10", features = ["v4", "v7", "fast-rng"] }
 base64 = "0.22"
 yt-dlp = "2.8.3"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", default-features = false }
 rodio = { version = "0.22.1" }
 aes-gcm = "0.11.0"
-rustube = "0.6.0"
-rusty_ytdl = "0.7.4"
-rustytdown = "0.1.0"

@@ -221,8 +221,8 @@ impl Server {
                                 continue;
                             }
 
-                            let mut vol_level = u128::from_str(vol_str).expect("Invalid volume level");
-                            if (vol_level > 100) {
+                            let vol_level = u128::from_str(vol_str).expect("Invalid volume level");
+                            if vol_level > 100  {
                                 println!("Volume level must be between 0 and 100");
                                 continue;
                             }
