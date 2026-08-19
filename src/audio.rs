@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 use std::collections::VecDeque;
- 
+
 use anyhow::{Context, Result};
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player};
 use yt_dlp::Downloader;
@@ -96,6 +96,7 @@ impl Audio {
 
         println!("Downloading audio via yt-dlp subprocess...");
 
+        // we run this as if it is a shell command 
         let output = Command::new("yt-dlp")
             .arg("-x")
             .arg("--audio-format")
