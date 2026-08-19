@@ -75,7 +75,7 @@ impl Client {
         let mut buffer = [0u8; 256];
         let (bytes_read, _sender_addr) = self.receive_bytes(&mut buffer).await?;
 
-        let response: Option<Vec<u8>> = extract_payload(&self.cipher, &buffer[..bytes_read], self.sequence_number + 1, packet_types::CONNECTION_ACK);
+        let response: Option<Vec<u8>> = extract_payload(&self.cipher, &buffer[..bytes_read], packet_types::CONNECTION_ACK, self.sequence_number + 1);
 
         if response.is_none() {
             println!("Error: Handshake failed, internal");
@@ -125,7 +125,7 @@ impl Client {
 
             println!("Received datagram of length {} from {}", bytes_read, sender_addr);
 
-            let response: Option<Vec<u8>> = extract_payload(&self.cipher, &buffer[..bytes_read], self.sequence_number + 1, packet_types::AUDIO_ANY);
+            let response: Option<Vec<u8>> = extract_payload(&self.cipher, &buffer[..bytes_read], packet_types::AUDIO_ANY, self.sequence_number + 1);
 
             if response.is_some() {
                 let payload = response.unwrap();

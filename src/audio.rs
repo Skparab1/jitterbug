@@ -249,17 +249,4 @@ impl Audio {
         self.player.set_volume(volume);
         println!("Volume set to: {}", volume);
     }
-
-    fn sanitize_filename(title: &str) -> String {
-        title
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-    }
 }

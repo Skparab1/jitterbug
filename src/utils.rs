@@ -11,8 +11,8 @@ use aes_gcm::{
 pub fn extract_payload(
     cipher: &Aes128Gcm,
     datagram: &[u8],
+	packet_type: u8,
     expected_seq: u32,
-    packet_type: u8,
 ) -> Option<Vec<u8>> {
 
 	// length and magic byte checks

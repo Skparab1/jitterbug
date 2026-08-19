@@ -114,7 +114,7 @@ impl Server {
                 let rstate = state.unwrap();
 
                 // we don't care about the payload here
-                let _ = extract_payload(&self.cipher, &buffer[..bytes_read], rstate.sequence_number, packet_types::LOADED_ACK);
+                let _ = extract_payload(&self.cipher, &buffer[..bytes_read], packet_types::LOADED_ACK, rstate.sequence_number);
 
                 rstate.acked_signal = true;
                 rstate.sequence_number += 1;
@@ -133,7 +133,7 @@ impl Server {
 
     async fn receive_connection(&mut self, buffer: [u8; 264], bytes_read: usize, sender_addr: SocketAddr) -> anyhow::Result<()> {
 
-        let content = extract_payload(&self.cipher, &buffer[..bytes_read], 0, packet_types::CONNECTION_SYN);
+        let content = extract_payload(&self.cipher, &buffer[..bytes_read], packet_types::CONNECTION_SYN, 0);
 
         if content.is_some(){
             let unwrapped_content = content.unwrap();
