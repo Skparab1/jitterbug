@@ -71,6 +71,10 @@ impl Audio {
         self.queue.len()
     }
 
+    pub fn get_current_track_title(&self) -> Option<String> {
+        self.current.as_ref().map(|track| track.title.clone())
+    }
+
     pub fn preflight_check(&mut self, action_type: u8) -> Result<bool>{
         if action_type == packet_types::AUDIO_SWAP {
             return Ok(self.queue.front().is_some());
@@ -97,8 +101,6 @@ impl Audio {
         fs::create_dir_all(&output_dir)?;
 
         let output_template = output_dir.join("%(id)s.%(ext)s");
-
-        println!("Downloading audio via yt-dlp subprocess...");
 
         // we run this as if it is a shell command 
         let output = Command::new("yt-dlp")
@@ -131,8 +133,6 @@ impl Audio {
                     .unwrap_or(false)
             })
             .ok_or_else(|| anyhow::anyhow!("Download succeeded, but no MP3 file was found for video ID {}", video.id))?;
-
-        println!("Loaded track: {} at {:?}", title, final_path);
 
         self.queue.push_back(Track {
             title,

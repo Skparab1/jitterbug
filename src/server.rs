@@ -38,6 +38,8 @@ pub struct Server {
     pub cipher: Aes128Gcm,
 
     audio: Audio,
+
+    ui: SimpleUI,
 }
 
 impl Server {
@@ -55,6 +57,8 @@ impl Server {
 
         let audio = Audio::new("server-temp-assets".to_string()).await.expect("Initializing server side audio failed.");
 
+        let ui = SimpleUI::new();
+
         Self {
             host: SERVER_HOST.into(),
             port: SERVER_PORT,
@@ -64,27 +68,9 @@ impl Server {
             cipher,
 
             audio,
+
+            ui: ui.expect("UI failed to initialize"),
         }
-    }
-
-    pub async fn init_tui(&self) -> anyhow::Result<()>{
-        // 1. Initialize the UI
-        let ui = SimpleUI::new();
-        ui.set_status("Initializing...");
-
-        // 2. Initialize your Audio subsystem
-        ui.set_status("Ready");
-
-        // Example: Simulating a state update from your background logic or network clients
-        ui.set_counts(self.audio.get_queue_len(), 1);
-
-        // When you load a track, update the UI effortlessly:
-        // ui.set_status("Loading URL...");
-        // audio_sys.load("https://www.youtube.com/watch?v=...").await?;
-        // ui.set_track("Song Title");
-        // ui.set_status("Idle");
-
-        Ok(())
     }
 
     pub async fn send_datagram_to_client(&mut self, 
@@ -116,7 +102,7 @@ impl Server {
         if !self.connections.contains_key(&sender_addr){
             // likely a connection syn 
             // we treat it as one
-            println!("Received connection request from {}", sender_addr);
+            // println!("Received connection request from {}", sender_addr);
             self.receive_connection(buffer, bytes_read, sender_addr).await?;
 
         } else {
@@ -168,7 +154,9 @@ impl Server {
                 acked_signal: false,
             });
 
-            println!("Connected to \t address: {}", sender_addr);
+            // println!("Connected to \t address: {}", sender_addr);
+
+            self.ui.set_status(format!("Just connected to client {}", sender_addr));
 
             // send an ack back.
             entry.sequence_number += 1;
@@ -182,7 +170,7 @@ impl Server {
     }
 
     pub async fn run(&mut self) -> anyhow::Result<()> {
-        println!("Listening for connections...\n");
+        self.ui.set_status("Listening for connections ...");
 
         let mut buffer = [0u8; 264];
         let mut stdin_lines = BufReader::new(io::stdin()).lines();
@@ -270,7 +258,9 @@ impl Server {
 
                         // send it to our own audio module
                         if line.starts_with("load ") {
+                            self.ui.set_status("Loading track...");
                             self.audio.load(line[5..].as_ref()).await?;
+                            self.ui.set_track(self.audio.get_current_track_title().unwrap_or("Unknown Track".to_string()));
                         } else if line.starts_with("swap") {
                             let _ = self.audio.swap();
                         } else if line.starts_with("play") {
