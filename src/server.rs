@@ -13,6 +13,9 @@ use std::str::FromStr;
 use crate::utils::{extract_payload, send_datagram};
 use crate::audio::Audio;
 
+use crate::tui::SimpleUI;
+use tokio::sync::watch;
+
 
 // clean up the imports later
 
@@ -62,6 +65,26 @@ impl Server {
 
             audio,
         }
+    }
+
+    pub async fn init_tui(&self) -> anyhow::Result<()>{
+        // 1. Initialize the UI
+        let ui = SimpleUI::new();
+        ui.set_status("Initializing...");
+
+        // 2. Initialize your Audio subsystem
+        ui.set_status("Ready");
+
+        // Example: Simulating a state update from your background logic or network clients
+        ui.set_counts(self.audio.get_queue_len(), 1);
+
+        // When you load a track, update the UI effortlessly:
+        // ui.set_status("Loading URL...");
+        // audio_sys.load("https://www.youtube.com/watch?v=...").await?;
+        // ui.set_track("Song Title");
+        // ui.set_status("Idle");
+
+        Ok(())
     }
 
     pub async fn send_datagram_to_client(&mut self, 

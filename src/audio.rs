@@ -67,6 +67,10 @@ impl Audio {
         self.player.get_pos()
     }
 
+    pub fn get_queue_len(&self) -> usize {
+        self.queue.len()
+    }
+
     pub fn preflight_check(&mut self, action_type: u8) -> Result<bool>{
         if action_type == packet_types::AUDIO_SWAP {
             return Ok(self.queue.front().is_some());
