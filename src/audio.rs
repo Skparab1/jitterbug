@@ -67,6 +67,22 @@ impl Audio {
         self.player.get_pos()
     }
 
+    pub fn get_duration(&self) -> Duration {
+        if let Some(track) = &self.current {
+            track.duration.map(|d| Duration::from_secs(d as u64)).unwrap_or(Duration::from_secs(0))
+        } else {
+            Duration::from_secs(0)
+        }
+    }
+
+    pub fn get_volume(&self) -> u128 {
+        (self.player.volume() * 100.0) as u128
+    }
+
+    pub fn is_playing(&self) -> bool {
+        !self.player.is_paused()
+    }
+
     pub fn get_queue_len(&self) -> usize {
         self.queue.len()
     }

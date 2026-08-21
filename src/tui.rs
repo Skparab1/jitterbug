@@ -28,6 +28,7 @@ pub struct SimpleUI {
     current_track: String,
     queue: Vec<String>,
     clients: HashMap<String, String>,
+    audio_info: String,
 
     input_buffer: String,
 }
@@ -50,6 +51,7 @@ impl SimpleUI {
             queue: Vec::new(),
 
             clients: HashMap::new(),
+            audio_info: "".to_string(),
 
             input_buffer: String::new(),
         };
@@ -111,6 +113,32 @@ impl SimpleUI {
         let _ = self.redraw();
     }
 
+    pub fn update_audio_status(&mut self, pos: Duration, duration: Duration, volume: u128) {
+        let pos_secs = pos.as_secs();
+        let duration_secs = duration.as_secs();
+
+        let blocks_done = if duration_secs > 0 {
+            (pos_secs * 35 / duration_secs) as usize
+        } else {
+            0
+        };
+
+        let status_msg = format!(
+            "Pos: {:02}:{:02} {} {:02}:{:02} | Volume: {}%",
+            pos_secs / 60,
+            pos_secs % 60,
+            "█".repeat(blocks_done)+&"░".repeat(35 - blocks_done),
+            duration_secs / 60,
+            duration_secs % 60,
+            volume
+        );
+
+        // self.set_status(status_msg.clone());
+
+        self.audio_info = status_msg;
+        let _ = self.redraw();
+    }
+
 
     pub fn poll_command(&mut self) -> Result<Option<String>, io::Error> {
         if event::poll(Duration::from_millis(50))? {
@@ -147,8 +175,8 @@ impl SimpleUI {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Length(3), // Header status
-                    Constraint::Length(3), // Current Track info
+                    Constraint::Length(4), // Header status
+                    Constraint::Length(4), // Current Track info
                     Constraint::Min(3), // Queue
                     Constraint::Min(3), // Clients
                     Constraint::Length(3), // 4. Command Input Box
@@ -156,13 +184,15 @@ impl SimpleUI {
                 .split(f.size());
 
             // Status
-            let status_widget = Paragraph::new(self.pairing_key.clone())
+            let status_content = format!("Pairing Key: \t{}\nStatus: \t{}", self.pairing_key, self.status);
+            let status_widget = Paragraph::new(status_content)
                 .block(Block::default().borders(Borders::ALL))
                 .style(Style::default().fg(Color::Red));
             f.render_widget(status_widget, chunks[0]);
 
             // Track
-            let track_widget = Paragraph::new(current_track)
+            let track_info = format!("{}\n{}", current_track, self.audio_info.clone());
+            let track_widget = Paragraph::new(track_info)
                 .block(Block::default().borders(Borders::ALL).title(" Now Playing"))
                 .style(Style::default().fg(Color::Green));
             f.render_widget(track_widget, chunks[1]);

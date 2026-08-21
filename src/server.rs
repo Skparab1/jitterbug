@@ -99,6 +99,7 @@ impl Server {
             // likely a connection syn 
             // we treat it as one
             // println!("Received connection request from {}", sender_addr);
+            self.ui.set_status(format!("Received connection request from {}", sender_addr));
             self.receive_connection(buffer, bytes_read, sender_addr).await?;
 
         } else {
@@ -125,13 +126,15 @@ impl Server {
                 rstate.sequence_number += 1;
 
                 // println!("Client {} has loaded the track.", sender_addr);
+                self.ui.set_status(format!("Client {} has loaded the track.", sender_addr));
                 self.ui.render_current_clients(&self.connections);
 
                 return Ok(())
             }
         }
 
-        println!("Received a loaded ack datagram from an unregistered client");
+        // println!("Received a loaded ack datagram from an unregistered client");
+        self.ui.set_status(format!("ERR: Received a loaded ack datagram from an unregistered client: {}", sender_addr));
 
         Ok(())
     }
@@ -165,7 +168,8 @@ impl Server {
             Ok(())
 
         } else {
-            println!("Error receiving connection");
+            // println!("Error receiving connection");
+            self.ui.set_status(format!("ERR: Error receiving connection from {}", sender_addr));
             Ok(())
         }
     }
@@ -209,13 +213,15 @@ impl Server {
 
             // I have entered a 0.5 too many times
             if vol_str.contains('.') {
-                println!("Volume level cannot be a decimal.");
+                // println!("Volume level cannot be a decimal.");
+                self.ui.set_status("ERR: Volume level cannot be a decimal.");
                 return Ok(());
             }
 
             let vol_level = u128::from_str(vol_str).expect("Invalid volume level");
             if vol_level > 100  {
-                println!("Volume level must be between 0 and 100");
+                // println!("Volume level must be between 0 and 100");
+                self.ui.set_status("ERR: Volume level must be between 0 and 100");
                 return Ok(());
             }
 
@@ -224,7 +230,8 @@ impl Server {
         }
 
         if !self.audio.preflight_check(send_packet_type)? {
-            println!("Command did not pass Audio's preflight checks");
+            // println!("Command did not pass Audio's preflight checks");
+            self.ui.set_status("ERR: Command did not pass Audio's preflight checks");
             return Ok(());
         }
 
@@ -242,8 +249,10 @@ impl Server {
         if line.starts_with("load ") {
             self.ui.set_status("Loading track...");
             self.ui.update_queue(self.audio.get_queue_titles(), self.audio.get_current_track_title().unwrap_or_default(), line[5..].to_string().into());
+            self.ui.render_current_clients(&self.connections);
             self.audio.load(line[5..].as_ref()).await?;
             self.ui.update_queue(self.audio.get_queue_titles(), self.audio.get_current_track_title().unwrap_or_default(), None);
+            self.ui.render_current_clients(&self.connections);
         } else if line.starts_with("swap") {
             let _ = self.audio.swap();
             self.ui.update_queue(self.audio.get_queue_titles(), self.audio.get_current_track_title().unwrap_or_default(), None);
@@ -271,7 +280,10 @@ impl Server {
         self.ui.set_status("Listening for connections ...");
 
         let mut buffer = [0u8; 264];
-        let mut stdin_lines = BufReader::new(io::stdin()).lines();
+        
+        // Create intervals outside the loop so they persist
+        let mut ui_ticker = tokio::time::interval(std::time::Duration::from_millis(20));
+        let mut audio_ticker = tokio::time::interval(std::time::Duration::from_millis(1000));
 
         loop {
             tokio::select! {
@@ -281,9 +293,8 @@ impl Server {
                     self.process_received_datagram(buffer, bytes_read, sender_addr).await?;
                 }
 
-                _ = tokio::time::sleep(std::time::Duration::from_millis(20)) => {
+                _ = ui_ticker.tick() => {
                     if let Some(line) = self.ui.poll_command()? {
-                        // Print to your TUI's output box instead of standard println!
                         self.ui.set_status(format!("You typed: {}", line));
 
                         if line == "quit" {
@@ -291,6 +302,17 @@ impl Server {
                         }
 
                         let _ = self.select_action(line).await;
+                    }
+                }
+
+                _ = audio_ticker.tick() => {
+
+                    if (self.audio.is_playing()){
+                        let pos = self.audio.get_pos();
+                        let duration = self.audio.get_duration();
+                        let volume = self.audio.get_volume();
+
+                        self.ui.update_audio_status(pos, duration, volume);
                     }
                 }
             }
