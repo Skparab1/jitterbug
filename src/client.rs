@@ -34,38 +34,36 @@ pub struct Client {
 
 impl Client {
     pub async fn new() -> anyhow::Result<Self> {
-        let mut address_port = String::new();
 
-        println!("Please enter the server address and port as <address>:<port>  >");
-        io::stdin().read_line(&mut address_port).expect("failed to readline");
-
-        let split_address_port: Vec<&str> = address_port.trim().split(':').collect();
-        let port = split_address_port[1].parse::<u16>().expect("failed to parse port");
-        let address = split_address_port[0].to_string();
-
-        Self::connect(address, port).await
+        Self::connect().await
     }
 
     // potentially reorganize into one function
 
-    async fn connect(host: String, port: u16) -> anyhow::Result<Self> {
-        let host = host.into();
+    async fn connect() -> anyhow::Result<Self> {
 
         let socket = UdpSocket::bind("0.0.0.0:0").await?;
-
-        let audio = Audio::new().await?;
 
         println!("Please enter the public sharing key");
         let mut input_key = String::new();
         io::stdin().read_line(&mut input_key).expect("failed to readline");
 
-        let decoded_bytes: Vec<u8> = STANDARD.decode(input_key.trim())?;
+        let decoded_bytes = STANDARD.decode(input_key.trim())?;
+        let decoded_string = String::from_utf8(decoded_bytes)?;
 
-        let pre_shared_key = Key::<Aes128Gcm>::from_slice(&decoded_bytes);
-
+        let Some((address, key)) = decoded_string.split_once("||") else { todo!() };
+        let Some((host, port)) = address.split_once(':') else { todo!() };
+        
+        let decoded_key = STANDARD.decode(key).expect("Failed to decode key");
+        let pre_shared_key = Key::<Aes128Gcm>::from_slice(decoded_key.as_slice());
         let cipher = Aes128Gcm::new(pre_shared_key);
 
-        Ok( Self{ server_host: host, server_port: port, socket, sequence_number: 0, cipher, audio } )
+        let server_host = host.to_string();
+        let server_port = port.parse::<u16>().expect("Failed to parse port from sharing key");
+
+        let audio = Audio::new("client-temp-assets".to_string()).await?;
+
+        Ok( Self{ server_host, server_port, socket, sequence_number: 0, cipher, audio } )
     }
 
     pub async fn syn_handshake(&mut self) -> anyhow::Result<()> {
@@ -77,7 +75,7 @@ impl Client {
         let mut buffer = [0u8; 256];
         let (bytes_read, _sender_addr) = self.receive_bytes(&mut buffer).await?;
 
-        let response: Option<Vec<u8>> = extract_payload(&self.cipher, &buffer[..bytes_read], self.sequence_number + 1, packet_types::CONNECTION_ACK);
+        let response: Option<Vec<u8>> = extract_payload(&self.cipher, &buffer[..bytes_read], packet_types::CONNECTION_ACK, self.sequence_number + 1);
 
         if response.is_none() {
             println!("Error: Handshake failed, internal");
@@ -127,7 +125,7 @@ impl Client {
 
             println!("Received datagram of length {} from {}", bytes_read, sender_addr);
 
-            let response: Option<Vec<u8>> = extract_payload(&self.cipher, &buffer[..bytes_read], self.sequence_number + 1, packet_types::AUDIO_ANY);
+            let response: Option<Vec<u8>> = extract_payload(&self.cipher, &buffer[..bytes_read], packet_types::AUDIO_ANY, self.sequence_number + 1);
 
             if response.is_some() {
                 let payload = response.unwrap();

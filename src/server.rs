@@ -45,12 +45,12 @@ impl Server {
 
         let pre_shared_key = Key::<Aes128Gcm>::generate();
         let cipher = Aes128Gcm::new(&pre_shared_key);
+    
+        let sharing_key = STANDARD.encode(format!("{}:{}||{}", SERVER_HOST, SERVER_PORT, STANDARD.encode(pre_shared_key)));
 
-        let audio = Audio::new().await.expect("Initializing server side audio failed.");
-        
-        println!("Address: {}:{}\n", SERVER_HOST, SERVER_PORT);
+        println!("Sharing key:\n\n{}\n\n", sharing_key);
 
-        println!("Pre-shared key: {}\n\n", STANDARD.encode(pre_shared_key));
+        let audio = Audio::new("server-temp-assets".to_string()).await.expect("Initializing server side audio failed.");
 
         Self {
             host: SERVER_HOST.into(),
@@ -114,7 +114,7 @@ impl Server {
                 let rstate = state.unwrap();
 
                 // we don't care about the payload here
-                let _ = extract_payload(&self.cipher, &buffer[..bytes_read], rstate.sequence_number, packet_types::LOADED_ACK);
+                let _ = extract_payload(&self.cipher, &buffer[..bytes_read], packet_types::LOADED_ACK, rstate.sequence_number);
 
                 rstate.acked_signal = true;
                 rstate.sequence_number += 1;
@@ -133,7 +133,7 @@ impl Server {
 
     async fn receive_connection(&mut self, buffer: [u8; 264], bytes_read: usize, sender_addr: SocketAddr) -> anyhow::Result<()> {
 
-        let content = extract_payload(&self.cipher, &buffer[..bytes_read], 0, packet_types::CONNECTION_SYN);
+        let content = extract_payload(&self.cipher, &buffer[..bytes_read], packet_types::CONNECTION_SYN, 0);
 
         if content.is_some(){
             let unwrapped_content = content.unwrap();
@@ -221,8 +221,8 @@ impl Server {
                                 continue;
                             }
 
-                            let mut vol_level = u128::from_str(vol_str).expect("Invalid volume level");
-                            if (vol_level > 100) {
+                            let vol_level = u128::from_str(vol_str).expect("Invalid volume level");
+                            if vol_level > 100  {
                                 println!("Volume level must be between 0 and 100");
                                 continue;
                             }

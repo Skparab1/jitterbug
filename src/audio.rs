@@ -1,23 +1,21 @@
 use std::fs;
 use std::path::PathBuf;
 use std::collections::VecDeque;
- 
+
 use anyhow::{Context, Result};
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player};
-use yt_dlp::model::Video;
-use yt_dlp::model::selector::{AudioQuality, AudioCodecPreference};
 use yt_dlp::Downloader;
 
-use crate::constants::{packet_types, OUTPUT_FILE_PATH};
+use crate::constants::{packet_types};
 
 // Time syncing
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::{sleep_until, Duration, Instant};
+use tokio::process::Command;
 
 struct Track {
     title: String,
     duration: Option<i64>, // seconds
-    video: Video,
     path: PathBuf,
 }
 
@@ -30,13 +28,14 @@ pub struct Audio {
     queue: VecDeque<Track>,
 
     handle: MixerDeviceSink,
-    player: Player
+    player: Player,
+    output_file_path: String,
 }
 
 impl Audio {
-    pub async fn new() -> Result<Self> {
+    pub async fn new(output_file_path: String) -> Result<Self> {
         let libs_dir = PathBuf::from("libs");
-        let output_dir = PathBuf::from(OUTPUT_FILE_PATH);
+        let output_dir = PathBuf::from(&output_file_path);
 
 
         let downloader = Downloader::with_new_binaries(libs_dir.clone(), output_dir.clone())
@@ -45,8 +44,6 @@ impl Audio {
         .build()
         .await?;
         
-        
-        downloader.update_downloader().await?;
 
         let handle = DeviceSinkBuilder::open_default_sink()?;
         let player = Player::connect_new(&handle.mixer());
@@ -60,7 +57,9 @@ impl Audio {
             queue,
 
             handle,
-            player
+            player,
+            
+            output_file_path,
         })    
     }   
 
@@ -80,33 +79,61 @@ impl Audio {
         Ok(true)
     }
 
-    pub async fn load(&mut self, url: &str) -> Result<()> {
+   pub async fn load(&mut self, url: &str) -> Result<()> {
         println!("Loading ...");
+
         let video = self.downloader.fetch_video_infos(url.to_string())
             .await.context("failed to fetch video metadata")?;
         
-        let filename = format!("{}.mp3", Self::sanitize_filename(&video.title));
+        let _video_id = &video.id;
+        let title = video.title.clone();
+        let duration = video.duration;
 
-        // let path = self.downloader.download_audio_stream(&video, &filename)
-        //     .await.context("failed to download audio stream")?;
+        let output_dir = PathBuf::from(self.output_file_path.clone());
+        fs::create_dir_all(&output_dir)?;
 
-        let path = self.downloader
-            .download_audio_stream_with_quality(
-                &video,
-                &filename,
-                AudioQuality::High,
-                AudioCodecPreference::AAC,
-            )
+        let output_template = output_dir.join("%(id)s.%(ext)s");
+
+        println!("Downloading audio via yt-dlp subprocess...");
+
+        // we run this as if it is a shell command 
+        let output = Command::new("yt-dlp")
+            .arg("-x")
+            .arg("--audio-format")
+            .arg("mp3")
+            .arg("--audio-quality")
+            .arg("0")
+            .arg("--cookies-from-browser")
+            .arg("firefox")
+            .arg("-o")
+            .arg(output_template.to_string_lossy().to_string())
+            .arg(url)
+            .output()
             .await
-            .context("failed to download audio stream")?;
+            .context("failed to execute yt-dlp subprocess")?;
 
-        println!("Loaded track: {}", video.title);
+        if !output.status.success() {
+            let error_msg = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("yt-dlp download failed: {}", error_msg);
+        }
+
+        let final_path = fs::read_dir(&output_dir)?
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.contains(&video.id) && s.ends_with(".mp3"))
+                    .unwrap_or(false)
+            })
+            .ok_or_else(|| anyhow::anyhow!("Download succeeded, but no MP3 file was found for video ID {}", video.id))?;
+
+        println!("Loaded track: {} at {:?}", title, final_path);
 
         self.queue.push_back(Track {
-            title: video.title.clone(),
-            duration: video.duration,
-            video,
-            path,
+            title,
+            duration,
+            path: final_path,
         });
 
         Ok(())
@@ -135,7 +162,7 @@ impl Audio {
 
         self.current = Some(next);
 
-        println!("Swapped in track: {}", self.current.as_ref().unwrap().video.title);
+        println!("Swapped in track: {}", self.current.as_ref().unwrap().title);
 
         Ok(())
     }
@@ -219,18 +246,5 @@ impl Audio {
         let volume = (volume as f32) / 100.0; // Convert to a value between 0.0 and 1.0
         self.player.set_volume(volume);
         println!("Volume set to: {}", volume);
-    }
-
-    fn sanitize_filename(title: &str) -> String {
-        title
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
     }
 }

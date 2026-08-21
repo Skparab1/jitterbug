@@ -1,1 +1,5 @@
 /target
+/temp-assets
+/client-temp-assets
+/server-temp-assets
+/libs
