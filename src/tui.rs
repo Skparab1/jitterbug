@@ -25,8 +25,6 @@ pub struct SimpleUI {
     // displays
     status: String,
     queue: Vec<String>,
-    current_track: usize,
-
     clients: HashMap<String, String>,
 
     input_buffer: String,
@@ -47,7 +45,6 @@ impl SimpleUI {
 
             status: "Ready to pair".to_string(),
             queue: Vec::new(),
-            current_track: 0,
 
             clients: HashMap::new(),
 
@@ -60,20 +57,35 @@ impl SimpleUI {
 
 
     // at some point make redraw return a void so we dont have all these _'s
-    pub fn queue_song(&mut self, song: String) {
-        self.queue.push(song);
-        let _ = self.redraw();
-    }
+    // we have 3 parts to this: the actual queue (most of the things)
+    // current (not in the queue)
+    // loading (not in the queue yet)
+    pub fn update_queue(&mut self, queue: Vec<String>, current: String, loading: Option<String>) {
 
-    pub fn dequeue_song(&mut self){
-        if !self.queue.is_empty() {
-            self.queue.remove(0);
-            let _ = self.redraw();
+        println!("Updating queue: current: {}, loading: {:?}", current, loading);
+        println!("Queue: {:?}", queue);
+
+        // keep into account things
+        self.queue.clear();
+
+        if (current.is_empty() && loading.is_none() && queue.is_empty()) {
+            self.queue.push("--".to_string());
         }
-    }
 
-    pub fn set_current_song(&mut self, song_index: usize) {
-        self.current_track = song_index;
+        if (!current.is_empty()) {
+            self.queue.push(format!("> {}", current.clone()));
+        }
+
+        for track in queue.iter() {
+            self.queue.push(format!("  {}", track.clone()));
+        }
+
+        if let Some(loading_track) = loading {
+            self.queue.push(format!("* {}", loading_track));
+        }
+
+        println!("Queue after update: {:?}", self.queue);
+
         let _ = self.redraw();
     }
 
@@ -140,15 +152,15 @@ impl SimpleUI {
 
             // Status
             let status_widget = Paragraph::new(self.pairing_key.clone())
-                .block(Block::default().borders(Borders::ALL));
+                .block(Block::default().borders(Borders::ALL))
                 .style(Style::default().fg(Color::Red));
             f.render_widget(status_widget, chunks[0]);
 
             // Track
-            let track_display = if self.queue.is_empty() || self.current_track == self.queue.len() {
+            let track_display = if self.queue.is_empty() {
                 "--".to_string()
             } else {
-                self.queue[self.current_track].clone()
+                self.queue[0].clone()
             };
 
             let track_widget = Paragraph::new(track_display)
@@ -157,16 +169,10 @@ impl SimpleUI {
             f.render_widget(track_widget, chunks[1]);
 
             // Track Queue
-            let queue_display = if self.queue.is_empty() || self.current_track == self.queue.len() {
+            let queue_display = if self.queue.is_empty() {
                 "--".to_string()
             } else {
-                self.queue.iter().enumerate().map(|(i, track)| {
-                    if i == self.current_track {
-                        format!("> {}", track)
-                    } else {
-                        format!("  {}", track)
-                    }
-                }).collect::<Vec<_>>().join("\n")
+                self.queue.join("\n")
             };
             let queue_widget = Paragraph::new(queue_display)
                 .block(Block::default().borders(Borders::ALL).title(" Track Queue "))
@@ -180,7 +186,7 @@ impl SimpleUI {
                 self.clients.iter().map(|(addr, status)| format!("{}: {}", addr, status)).collect::<Vec<_>>().join("\n")
             };
             let clients_widget = Paragraph::new(clients_display)
-                .block(Block::default().borders(Borders::ALL).title(" Metrics "))
+                .block(Block::default().borders(Borders::ALL).title(" Clients "))
                 .style(Style::default().fg(Color::Yellow));
             f.render_widget(clients_widget, chunks[3]);
 

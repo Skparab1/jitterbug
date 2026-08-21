@@ -71,6 +71,10 @@ impl Audio {
         self.queue.len()
     }
 
+    pub fn get_queue_titles(&self) -> Vec<String> {
+        self.queue.iter().map(|track| track.title.clone()).collect()
+    }
+
     pub fn get_current_track_title(&self) -> Option<String> {
         self.current.as_ref().map(|track| track.title.clone())
     }
