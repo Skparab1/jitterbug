@@ -5,40 +5,35 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
     Terminal,
 };
+use crossterm::event::{self, Event, KeyCode};
 use std::io::{self, Stdout};
-use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-#[derive(Clone)]
-pub struct AppState {
-    pub status_message: String,
-    pub current_track: String,
-    pub queue_count: usize,
-    pub client_count: usize,
-}
 
-impl Default for AppState {
-    fn default() -> Self {
-        Self {
-            status_message: "Ready".to_string(),
-            current_track: "None".to_string(),
-            queue_count: 0,
-            client_count: 0,
-        }
-    }
-}
+use crate::constants::ConnectionState;
 
-#[derive(Clone)]
+use std::collections::HashMap;
+use std::net::SocketAddr;
+
+// some of these are for server only -> abstract them to a seperate class soon
+// particularly all the client fields
 pub struct SimpleUI {
-    state: Arc<Mutex<AppState>>,
-    // We store the backend/terminal in a thread-safe mutex wrapper to re-draw on-demand
-    terminal: Arc<Mutex<Terminal<CrosstermBackend<Stdout>>>>,
-    // Customization options for color
-    theme_color: Color,
+    terminal: Terminal<CrosstermBackend<Stdout>>,
+
+    pairing_key: String,
+
+    // displays
+    status: String,
+    queue: Vec<String>,
+    current_track: usize,
+
+    clients: HashMap<String, String>,
+
+    input_buffer: String,
 }
 
 impl SimpleUI {
-    pub fn new() -> Result<Self, io::Error> {
-        // Setup Crossterm terminal in raw mode and alternate screen
+    pub fn new(pairing_key: String) -> Result<Self, io::Error> {
         crossterm::terminal::enable_raw_mode()?;
         let mut stdout = io::stdout();
         crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen)?;
@@ -46,115 +41,169 @@ impl SimpleUI {
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
 
-        let ui = Self {
-            state: Arc::new(Mutex::new(AppState::default())),
-            terminal: Arc::new(Mutex::new(terminal)),
-            theme_color: Color::Cyan, // Default color option
+        let mut ui = Self {
+            terminal,
+            pairing_key,
+
+            status: "Ready to pair".to_string(),
+            queue: Vec::new(),
+            current_track: 0,
+
+            clients: HashMap::new(),
+
+            input_buffer: String::new(),
         };
 
-        ui.redraw()?;
+        let _ = ui.redraw();
         Ok(ui)
     }
 
-    /// Optional: Customize the accent color of your UI layout
-    pub fn with_color(mut self, color: Color) -> Self {
-        self.theme_color = color;
+
+    // at some point make redraw return a void so we dont have all these _'s
+    pub fn queue_song(&mut self, song: String) {
+        self.queue.push(song);
         let _ = self.redraw();
-        self
     }
 
-    // Exact same interface methods as before
-    pub fn set_status(&self, msg: impl Into<String>) {
-        if let Ok(mut state) = self.state.lock() {
-            state.status_message = msg.into();
+    pub fn dequeue_song(&mut self){
+        if !self.queue.is_empty() {
+            self.queue.remove(0);
+            let _ = self.redraw();
+        }
+    }
+
+    pub fn set_current_song(&mut self, song_index: usize) {
+        self.current_track = song_index;
+        let _ = self.redraw();
+    }
+
+    // formulate what exactly we need to render, then store it in 
+    pub fn render_current_clients(&mut self, clients: &HashMap<SocketAddr, ConnectionState>) {
+        self.clients.clear();
+
+        for (addr, state) in clients.iter() {
+
+            let status = if state.acked_signal { "Loaded Track" } else { "Loading..." };
+
+            self.clients.insert(addr.to_string(), status.to_string());
         }
         let _ = self.redraw();
     }
 
-    pub fn set_track(&self, track: impl Into<String>) {
-        if let Ok(mut state) = self.state.lock() {
-            state.current_track = track.into();
-        }
+    pub fn set_status(&mut self, msg: impl Into<String>) {
+        self.status = msg.into();
         let _ = self.redraw();
     }
 
-    pub fn set_counts(&self, queue: usize, clients: usize) {
-        if let Ok(mut state) = self.state.lock() {
-            state.queue_count = queue;
-            state.client_count = clients;
+
+    pub fn poll_command(&mut self) -> Result<Option<String>, io::Error> {
+        if event::poll(Duration::from_millis(50))? {
+            if let Event::Key(key) = event::read()? {
+                match key.code {
+                    KeyCode::Enter => {
+                        let cmd = self.input_buffer.trim().to_string();
+                        self.input_buffer.clear();
+                        self.redraw()?;
+                        if !cmd.is_empty() {
+                            return Ok(Some(cmd));
+                        }
+                    }
+                    KeyCode::Backspace => {
+                        self.input_buffer.pop();
+                        self.redraw()?;
+                    }
+                    KeyCode::Char(c) => {
+                        self.input_buffer.push(c);
+                        self.redraw()?;
+                    }
+                    _ => {}
+                }
+            }
         }
-        let _ = self.redraw();
+        Ok(None)
     }
 
-    // Clears the screen buffer and rerenders using Ratatui layout positions
-    fn redraw(&self) -> Result<(), io::Error> {
-        let state = self.state.lock().unwrap().clone();
-        let mut term = self.terminal.lock().unwrap();
+    fn redraw(&mut self) -> Result<(), io::Error> {
+        let input = self.input_buffer.clone();
 
-        term.draw(|f| {
-            // Split the full screen into structural vertical boxes
+        self.terminal.draw(|f| {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Length(3), // Top box: Status Message
-                    Constraint::Length(3), // Middle box: Current Track
-                    Constraint::Length(3), // Bottom box: Counts Dashboard
+                    Constraint::Length(3), // Header status
+                    Constraint::Length(3), // Current Track info
+                    Constraint::Length(3), // Queue
+                    Constraint::Length(3), // Clients
+                    Constraint::Length(3), // 4. Command Input Box
                 ])
                 .split(f.size());
 
-            // 1. Status Widget
-            let status_widget = Paragraph::new(state.status_message)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(" System Status ")
-                )
-                .style(Style::default().fg(self.theme_color));
+            // Status
+            let status_widget = Paragraph::new(self.pairing_key.clone())
+                .block(Block::default().borders(Borders::ALL));
+                .style(Style::default().fg(Color::Red));
             f.render_widget(status_widget, chunks[0]);
 
-            // 2. Track Widget
-            let track_display = if state.current_track.is_empty() {
-                "None".to_string()
+            // Track
+            let track_display = if self.queue.is_empty() || self.current_track == self.queue.len() {
+                "--".to_string()
             } else {
-                state.current_track
+                self.queue[self.current_track].clone()
             };
+
             let track_widget = Paragraph::new(track_display)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(" Current Track ")
-                )
-                .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD));
+                .block(Block::default().borders(Borders::ALL).title(" Now Playing"))
+                .style(Style::default().fg(Color::Green));
             f.render_widget(track_widget, chunks[1]);
 
-            // 3. Counts Widget (Queue & Clients)
-            let counts_text = format!(
-                "Queue Items: {}  |  Connected Clients: {}",
-                state.queue_count, state.client_count
-            );
-            let counts_widget = Paragraph::new(counts_text)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(" Metrics ")
-                )
+            // Track Queue
+            let queue_display = if self.queue.is_empty() || self.current_track == self.queue.len() {
+                "--".to_string()
+            } else {
+                self.queue.iter().enumerate().map(|(i, track)| {
+                    if i == self.current_track {
+                        format!("> {}", track)
+                    } else {
+                        format!("  {}", track)
+                    }
+                }).collect::<Vec<_>>().join("\n")
+            };
+            let queue_widget = Paragraph::new(queue_display)
+                .block(Block::default().borders(Borders::ALL).title(" Track Queue "))
+                .style(Style::default().fg(Color::Blue));
+            f.render_widget(queue_widget, chunks[2]);
+
+            // Clients
+            let clients_display = if self.clients.is_empty() {
+                "--".to_string()
+            } else {
+                self.clients.iter().map(|(addr, status)| format!("{}: {}", addr, status)).collect::<Vec<_>>().join("\n")
+            };
+            let clients_widget = Paragraph::new(clients_display)
+                .block(Block::default().borders(Borders::ALL).title(" Metrics "))
                 .style(Style::default().fg(Color::Yellow));
-            f.render_widget(counts_widget, chunks[2]);
+            f.render_widget(clients_widget, chunks[3]);
+
+
+            // Input Box
+            let input_text = format!("> {}", input);
+            let input_widget = Paragraph::new(input_text)
+                .block(Block::default().borders(Borders::ALL).title(" Input "))
+                .style(Style::default().fg(Color::White));
+            f.render_widget(input_widget, chunks[4]);
         })?;
 
         Ok(())
     }
 }
 
-// Clean up terminal settings when the UI instance drops (e.g., app exit)
 impl Drop for SimpleUI {
     fn drop(&mut self) {
         let _ = crossterm::terminal::disable_raw_mode();
-        let mut term = self.terminal.lock().unwrap();
         let _ = crossterm::execute!(
-            term.backend_mut(),
+            self.terminal.backend_mut(),
             crossterm::terminal::LeaveAlternateScreen
         );
-        let _ = term.show_cursor();
+        let _ = self.terminal.show_cursor();
     }
 }

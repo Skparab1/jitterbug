@@ -134,6 +134,8 @@ impl Audio {
             })
             .ok_or_else(|| anyhow::anyhow!("Download succeeded, but no MP3 file was found for video ID {}", video.id))?;
 
+        println!("Loaded track: {}", title);
+
         self.queue.push_back(Track {
             title,
             duration,

@@ -57,7 +57,7 @@ impl Server {
 
         let audio = Audio::new("server-temp-assets".to_string()).await.expect("Initializing server side audio failed.");
 
-        let ui = SimpleUI::new();
+        let ui = SimpleUI::new(sharing_key);
 
         Self {
             host: SERVER_HOST.into(),
@@ -183,9 +183,10 @@ impl Server {
                     self.process_received_datagram(buffer, bytes_read, sender_addr).await?;
                 }
 
-                line = stdin_lines.next_line() => {
-                    if let Some(line) = line? {
-                        println!("You typed {}", line);
+                _ = tokio::time::sleep(std::time::Duration::from_millis(20)) => {
+                    if let Some(line) = self.ui.poll_command()? {
+                        // Print to your TUI's output box instead of standard println!
+                        self.ui.set_status(format!("You typed: {}", line));
 
                         if line == "quit" {
                             break Ok(())
@@ -260,7 +261,7 @@ impl Server {
                         if line.starts_with("load ") {
                             self.ui.set_status("Loading track...");
                             self.audio.load(line[5..].as_ref()).await?;
-                            self.ui.set_track(self.audio.get_current_track_title().unwrap_or("Unknown Track".to_string()));
+                            // self.ui.set_track(self.audio.get_current_track_title().unwrap_or("Unknown Track".to_string()));
                         } else if line.starts_with("swap") {
                             let _ = self.audio.swap();
                         } else if line.starts_with("play") {
