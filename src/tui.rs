@@ -24,6 +24,8 @@ pub struct SimpleUI {
 
     // displays
     status: String,
+
+    current_track: String,
     queue: Vec<String>,
     clients: HashMap<String, String>,
 
@@ -44,6 +46,7 @@ impl SimpleUI {
             pairing_key,
 
             status: "Ready to pair".to_string(),
+            current_track: "--".to_string(),
             queue: Vec::new(),
 
             clients: HashMap::new(),
@@ -62,8 +65,8 @@ impl SimpleUI {
     // loading (not in the queue yet)
     pub fn update_queue(&mut self, queue: Vec<String>, current: String, loading: Option<String>) {
 
-        println!("Updating queue: current: {}, loading: {:?}", current, loading);
-        println!("Queue: {:?}", queue);
+        // println!("Updating queue: current: {}, loading: {:?}", current, loading);
+        // println!("Queue: {:?}", queue);
 
         // keep into account things
         self.queue.clear();
@@ -74,6 +77,7 @@ impl SimpleUI {
 
         if (!current.is_empty()) {
             self.queue.push(format!("> {}", current.clone()));
+            self.current_track = current.clone();
         }
 
         for track in queue.iter() {
@@ -84,7 +88,7 @@ impl SimpleUI {
             self.queue.push(format!("* {}", loading_track));
         }
 
-        println!("Queue after update: {:?}", self.queue);
+        // println!("Queue after update: {:?}", self.queue);
 
         let _ = self.redraw();
     }
@@ -137,6 +141,7 @@ impl SimpleUI {
 
     fn redraw(&mut self) -> Result<(), io::Error> {
         let input = self.input_buffer.clone();
+        let current_track = self.current_track.clone();
 
         self.terminal.draw(|f| {
             let chunks = Layout::default()
@@ -144,8 +149,8 @@ impl SimpleUI {
                 .constraints([
                     Constraint::Length(3), // Header status
                     Constraint::Length(3), // Current Track info
-                    Constraint::Length(3), // Queue
-                    Constraint::Length(3), // Clients
+                    Constraint::Min(3), // Queue
+                    Constraint::Min(3), // Clients
                     Constraint::Length(3), // 4. Command Input Box
                 ])
                 .split(f.size());
@@ -157,13 +162,7 @@ impl SimpleUI {
             f.render_widget(status_widget, chunks[0]);
 
             // Track
-            let track_display = if self.queue.is_empty() {
-                "--".to_string()
-            } else {
-                self.queue[0].clone()
-            };
-
-            let track_widget = Paragraph::new(track_display)
+            let track_widget = Paragraph::new(current_track)
                 .block(Block::default().borders(Borders::ALL).title(" Now Playing"))
                 .style(Style::default().fg(Color::Green));
             f.render_widget(track_widget, chunks[1]);

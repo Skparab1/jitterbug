@@ -92,7 +92,7 @@ impl Audio {
     }
 
    pub async fn load(&mut self, url: &str) -> Result<()> {
-        println!("Loading ...");
+        // println!("Loading ...");
 
         let video = self.downloader.fetch_video_infos(url.to_string())
             .await.context("failed to fetch video metadata")?;
@@ -138,7 +138,7 @@ impl Audio {
             })
             .ok_or_else(|| anyhow::anyhow!("Download succeeded, but no MP3 file was found for video ID {}", video.id))?;
 
-        println!("Loaded track: {}", title);
+        // println!("Loaded track: {}", title);
 
         self.queue.push_back(Track {
             title,
@@ -157,7 +157,7 @@ impl Audio {
 
         // delete the current video and artifacts
         
-        println!("Started audio swap");
+        // println!("Started audio swap");
         
         self.discard_current_playback()?;
 
@@ -172,7 +172,7 @@ impl Audio {
 
         self.current = Some(next);
 
-        println!("Swapped in track: {}", self.current.as_ref().unwrap().title);
+        // println!("Swapped in track: {}", self.current.as_ref().unwrap().title);
 
         Ok(())
     }
@@ -200,23 +200,23 @@ impl Audio {
     // Pause the current track
     pub fn pause(&self) {
         self.player.pause();
-        println!("Paused track");
+        // println!("Paused track");
     }
 
     pub async fn play_at(&self, to_set_timestamp: u128, when_to_play_timestamp: u128){
 
-        println!("PlayAt invoked");
+        // println!("PlayAt invoked");
         
         let _ = self.player.try_seek(Duration::from_secs((to_set_timestamp / 1000) as u64));
 
-        println!("Seeked to: {} ms", to_set_timestamp);
+        // println!("Seeked to: {} ms", to_set_timestamp);
 
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
             .as_millis();
 
-        println!("Now will wait until: {} ms", when_to_play_timestamp);
+        // println!("Now will wait until: {} ms", when_to_play_timestamp);
 
         if when_to_play_timestamp > now_ms {
             let ms_to_wait = (when_to_play_timestamp - now_ms) as u64;
@@ -226,7 +226,7 @@ impl Audio {
             sleep_until(deadline).await;
         }
 
-        println!("Wait time elapsed. Now playing...");
+        // println!("Wait time elapsed. Now playing...");
 
         self.play();
 
@@ -235,7 +235,7 @@ impl Audio {
     // Play a track
     pub fn play(&self) {
         self.player.play();
-        println!("Played track");
+        // println!("Played track");
     }
 
     pub fn forward(&self){
@@ -255,6 +255,6 @@ impl Audio {
     pub fn set_volume(&mut self, volume: u128) {
         let volume = (volume as f32) / 100.0; // Convert to a value between 0.0 and 1.0
         self.player.set_volume(volume);
-        println!("Volume set to: {}", volume);
+        // println!("Volume set to: {}", volume);
     }
 }
