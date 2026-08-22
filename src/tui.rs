@@ -21,6 +21,7 @@ pub struct SimpleUI {
     terminal: Terminal<CrosstermBackend<Stdout>>,
 
     pairing_key: String,
+    is_server: bool,
 
     // displays
     status: String,
@@ -34,7 +35,7 @@ pub struct SimpleUI {
 }
 
 impl SimpleUI {
-    pub fn new(pairing_key: String) -> Result<Self, io::Error> {
+    pub fn new(pairing_key: String, is_server: bool) -> Result<Self, io::Error> {
         crossterm::terminal::enable_raw_mode()?;
         let mut stdout = io::stdout();
         crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen)?;
@@ -45,6 +46,7 @@ impl SimpleUI {
         let mut ui = Self {
             terminal,
             pairing_key,
+            is_server,
 
             status: "Ready to pair".to_string(),
             current_track: "--".to_string(),
@@ -113,18 +115,21 @@ impl SimpleUI {
         let _ = self.redraw();
     }
 
-    pub fn update_audio_status(&mut self, pos: Duration, duration: Duration, volume: u128) {
+    pub fn update_audio_status(&mut self, pos: Duration, duration: Duration, volume: u128, is_playing: bool) {
         let pos_secs = pos.as_secs();
         let duration_secs = duration.as_secs();
 
         let blocks_done = if duration_secs > 0 {
-            (pos_secs * 35 / duration_secs) as usize
+            (pos_secs * 40 / duration_secs) as usize
         } else {
             0
         };
 
+        let symbol = if is_playing { "▶" } else { "⏸" };
+
         let status_msg = format!(
-            "Pos: {:02}:{:02} {} {:02}:{:02} | Volume: {}%",
+            " {} | {:02}:{:02} {} {:02}:{:02} | Volume: {}%",
+            symbol,
             pos_secs / 60,
             pos_secs % 60,
             "█".repeat(blocks_done)+&"░".repeat(35 - blocks_done),
@@ -171,16 +176,20 @@ impl SimpleUI {
         let input = self.input_buffer.clone();
         let current_track = self.current_track.clone();
 
+        let mut constraints = vec![
+                Constraint::Length(4), // Header status
+                Constraint::Length(4), // Current Track info
+                Constraint::Min(3), // Queue
+            ];  
+
+        if (self.is_server) {
+            constraints.push(Constraint::Min(3)); // Clients
+            constraints.push(Constraint::Length(3)); // Command Input Box
+        }
         self.terminal.draw(|f| {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(4), // Header status
-                    Constraint::Length(4), // Current Track info
-                    Constraint::Min(3), // Queue
-                    Constraint::Min(3), // Clients
-                    Constraint::Length(3), // 4. Command Input Box
-                ])
+                .constraints(constraints)
                 .split(f.size());
 
             // Status
@@ -193,7 +202,7 @@ impl SimpleUI {
             // Track
             let track_info = format!("{}\n{}", current_track, self.audio_info.clone());
             let track_widget = Paragraph::new(track_info)
-                .block(Block::default().borders(Borders::ALL).title(" Now Playing"))
+                .block(Block::default().borders(Borders::ALL).title(" Now Playing "))
                 .style(Style::default().fg(Color::Green));
             f.render_widget(track_widget, chunks[1]);
 
@@ -208,24 +217,27 @@ impl SimpleUI {
                 .style(Style::default().fg(Color::Blue));
             f.render_widget(queue_widget, chunks[2]);
 
-            // Clients
-            let clients_display = if self.clients.is_empty() {
-                "--".to_string()
-            } else {
-                self.clients.iter().map(|(addr, status)| format!("{}: {}", addr, status)).collect::<Vec<_>>().join("\n")
-            };
-            let clients_widget = Paragraph::new(clients_display)
-                .block(Block::default().borders(Borders::ALL).title(" Clients "))
-                .style(Style::default().fg(Color::Yellow));
-            f.render_widget(clients_widget, chunks[3]);
+            if self.is_server {
+
+                // Clients
+                let clients_display = if self.clients.is_empty() {
+                    "--".to_string()
+                } else {
+                    self.clients.iter().map(|(addr, status)| format!("{}: {}", addr, status)).collect::<Vec<_>>().join("\n")
+                };
+                let clients_widget = Paragraph::new(clients_display)
+                    .block(Block::default().borders(Borders::ALL).title(" Clients "))
+                    .style(Style::default().fg(Color::Yellow));
+                f.render_widget(clients_widget, chunks[3]);
 
 
-            // Input Box
-            let input_text = format!("> {}", input);
-            let input_widget = Paragraph::new(input_text)
-                .block(Block::default().borders(Borders::ALL).title(" Input "))
-                .style(Style::default().fg(Color::White));
-            f.render_widget(input_widget, chunks[4]);
+                // Input Box
+                let input_text = format!("> {}", input);
+                let input_widget = Paragraph::new(input_text)
+                    .block(Block::default().borders(Borders::ALL))
+                    .style(Style::default().fg(Color::White));
+                f.render_widget(input_widget, chunks[4]);
+            }
         })?;
 
         Ok(())

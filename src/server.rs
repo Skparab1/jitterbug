@@ -53,7 +53,7 @@ impl Server {
 
         let audio = Audio::new("server-temp-assets".to_string()).await.expect("Initializing server side audio failed.");
 
-        let ui = SimpleUI::new(sharing_key);
+        let ui = SimpleUI::new(sharing_key, true);
 
         Self {
             host: SERVER_HOST.into(),
@@ -306,14 +306,11 @@ impl Server {
                 }
 
                 _ = audio_ticker.tick() => {
+                    let pos = self.audio.get_pos();
+                    let duration = self.audio.get_duration();
+                    let volume = self.audio.get_volume();
 
-                    if (self.audio.is_playing()){
-                        let pos = self.audio.get_pos();
-                        let duration = self.audio.get_duration();
-                        let volume = self.audio.get_volume();
-
-                        self.ui.update_audio_status(pos, duration, volume);
-                    }
+                    self.ui.update_audio_status(pos, duration, volume, self.audio.is_playing());
                 }
             }
         }      
