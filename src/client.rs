@@ -11,6 +11,9 @@ use base64::Engine as _;
 use crate::constants::packet_types;
 use crate::utils::{create_frame, extract_payload, packet_type_to_text};
 
+use crate::tui::SimpleUI;
+
+
 use aes_gcm::{
     aead::{ Generate, Key, KeyInit},
     Aes128Gcm,
@@ -30,6 +33,8 @@ pub struct Client {
 
     // audio element
     audio: Audio,
+
+    ui: SimpleUI,
 }
 
 impl Client {
@@ -63,7 +68,9 @@ impl Client {
 
         let audio = Audio::new("client-temp-assets".to_string()).await?;
 
-        Ok( Self{ server_host, server_port, socket, sequence_number: 0, cipher, audio } )
+        let ui = SimpleUI::new(input_key.trim().to_string(), false)?;
+
+        Ok( Self{ server_host, server_port, socket, sequence_number: 0, cipher, audio, ui } )
     }
 
     pub async fn syn_handshake(&mut self) -> anyhow::Result<()> {
@@ -91,7 +98,7 @@ impl Client {
             return Err(anyhow::anyhow!("Error: Handshake failed, nonce mismatch"));
         }
 
-        println!("Connected!");
+        self.ui.set_status("Connected!".to_string());
 
         self.sequence_number += 1;
         
@@ -113,37 +120,46 @@ impl Client {
 
         self.sequence_number += 1;
 
-	    println!("Connecting to server... ");
+	    self.ui.set_status("Connecting to server... ".to_string());
 
         Ok(challenge_nonce)
     }
 
     pub async fn receive_instructions(&mut self) -> anyhow::Result<()> {
         let mut buffer = [0u8; 264];
+
+        let mut audio_ticker = tokio::time::interval(std::time::Duration::from_millis(1000));
+
         loop {
-            let (bytes_read, sender_addr) = self.receive_bytes(&mut buffer).await?;
+            tokio::select! {
+                // Branch 1: Receive bytes from the network
+                result = self.receive_bytes(&mut buffer) => {
+                    let (bytes_read, sender_addr) = result?;
 
-            println!("Received datagram of length {} from {}", bytes_read, sender_addr);
+                    let response: Option<Vec<u8>> = extract_payload(&self.cipher, &buffer[..bytes_read], packet_types::AUDIO_ANY, self.sequence_number + 1);
 
-            let response: Option<Vec<u8>> = extract_payload(&self.cipher, &buffer[..bytes_read], packet_types::AUDIO_ANY, self.sequence_number + 1);
+                    if response.is_some() {
+                        let payload = response.unwrap();
+                        let packet_type = payload[0];
+                        let packet_text = packet_type_to_text(packet_type);
 
-            if response.is_some() {
-                let payload = response.unwrap();
-                
-                println!("Payload length: {}", payload.len());
+                        self.ui.set_status(format!("Received datagram of type {} from {}", packet_text, sender_addr));
+                        self.sequence_number += 1;
+                        self.action_audio_instruction(packet_type, payload[5..].to_vec()).await?;
+                    } else {
+                        println!("Error: Failed to extract payload from datagram");
+                    }    
+                },
 
-                let packet_type = payload[0];
-                let packet_text = packet_type_to_text(packet_type);
+                // Branch 2: Handle the audio ticker (Notice the comma at the end!)
+                _ = audio_ticker.tick() => {
+                    let pos = self.audio.get_pos();
+                    let duration = self.audio.get_duration();
+                    let volume = self.audio.get_volume();
 
-                println!("Received datagram of type {} from {}", packet_text, sender_addr);
-
-                self.sequence_number += 1;
-
-                self.action_audio_instruction(packet_type, payload[5..].to_vec()).await?;
-           
-            } else {
-                println!("Error: Failed to extract payload from datagram");
-            }        
+                    self.ui.update_audio_status(pos, duration, volume, self.audio.is_playing());
+                },
+            }
         }
     }
 
@@ -155,10 +171,10 @@ impl Client {
 
             let to_set_timestamp = u128::from_be_bytes(payload[0..16].try_into()?);
 
-            println!("The timestamp to set the player to is: {}", to_set_timestamp);
+            // println!("The timestamp to set the player to is: {}", to_set_timestamp);
             let when_to_play_timestamp = u128::from_be_bytes(payload[16..32].try_into()?);
 
-            println!("The timestamp to play at is: {}", when_to_play_timestamp);
+            // println!("The timestamp to play at is: {}", when_to_play_timestamp);
             
             self.audio.play_at(to_set_timestamp, when_to_play_timestamp).await;
 
@@ -171,15 +187,22 @@ impl Client {
         } else if packet_type == packet_types::AUDIO_PAUSE {
             self.audio.pause();
         } else if packet_type == packet_types::AUDIO_SWAP {
-            println!("Swapping audio track");
+            // println!("Swapping audio track");
             if let Err(err) = self.audio.swap() {
                 println!("audio swap failed: {err:#}");
             }
+
+            self.ui.update_queue(self.audio.get_queue_titles(), self.audio.get_current_track_title().unwrap_or_default(), None);
+
         } else if packet_type == packet_types::AUDIO_LOAD {
             let decoded: &str = std::str::from_utf8(&payload)?;
 
+            self.ui.update_queue(self.audio.get_queue_titles(), self.audio.get_current_track_title().unwrap_or_default(), Some(decoded.to_string()));
+
             let _ = self.audio.load(decoded).await;
             // after it loads, send the ack.
+
+            self.ui.update_queue(self.audio.get_queue_titles(), self.audio.get_current_track_title().unwrap_or_default(), None);
 
             let frame = create_frame(&self.cipher, packet_types::LOADED_ACK, &self.sequence_number.to_be_bytes(), None).await?;
             self.send_message_bytes(&frame).await?;
