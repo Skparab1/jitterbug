@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::collections::VecDeque;
 
 use anyhow::{Context, Result};
-use rodio::{Decoder, DeviceSinkBuilder, Player};
+use rodio::{Decoder, DeviceSinkBuilder, Player, MixerDeviceSink};
 use yt_dlp::Downloader;
 
 use crate::constants::{packet_types};
@@ -27,6 +27,8 @@ pub struct Audio {
 
     queue: VecDeque<Track>,
 
+    _handle: MixerDeviceSink,
+
     player: Player,
     output_file_path: String,
 }
@@ -43,7 +45,7 @@ impl Audio {
         .build()
         .await?;
         
-
+        // this handle must be kept alive after the init, otherwise playing
         let handle = DeviceSinkBuilder::open_default_sink()?;
         let player = Player::connect_new(&handle.mixer());
 
@@ -54,6 +56,7 @@ impl Audio {
             
             current: None,
             queue,
+            _handle: handle,
 
             player,
             
@@ -218,22 +221,15 @@ impl Audio {
     }
 
     pub async fn play_at(&self, to_set_timestamp: u128, when_to_play_timestamp: u128){
-
-        println!("PlayAt invoked");
-
-        println!("Seeking to timestamp: {} ms", to_set_timestamp);
         
         let _ = self.player.try_seek(Duration::from_secs((to_set_timestamp / 1000) as u64));
 
-        println!("Seeked to: {} ms", to_set_timestamp);
 
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
             .as_millis();
 
-        println!("Now will wait until: {} ms", when_to_play_timestamp);
-        println!("Current time is: {} ms", now_ms);
 
         if when_to_play_timestamp > now_ms {
             let ms_to_wait = (when_to_play_timestamp - now_ms) as u64;
@@ -242,8 +238,6 @@ impl Audio {
             let deadline = Instant::now() + Duration::from_millis(ms_to_wait);
             sleep_until(deadline).await;
         }
-
-        println!("Wait time elapsed. Now playing...");
 
         self.play();
 

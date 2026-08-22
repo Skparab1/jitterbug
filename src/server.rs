@@ -181,7 +181,6 @@ impl Server {
             send_packet_type = packet_types::AUDIO_SWAP;
         } else if line.starts_with("play") {
 
-            println!("start doing play command");
             send_packet_type = packet_types::AUDIO_PLAY;
             // need to record the audio timestamp where to start playing
             
@@ -196,7 +195,6 @@ impl Server {
 
             payload.extend_from_slice(&play_time_bytes);
 
-            println!("Done making play payload");
 
         } else if line.starts_with("pause") {
             send_packet_type = packet_types::AUDIO_PAUSE;
@@ -256,15 +254,12 @@ impl Server {
             let _ = self.audio.swap();
             self.ui.update_queue(self.audio.get_queue_titles(), self.audio.get_current_track_title().unwrap_or_default(), None);
         } else if line.starts_with("play") {
-            println!("Play command received");
             let to_set_timestamp = u128::from_be_bytes(payload[0..16].try_into().expect("slice with incorrect length"));
             let when_to_play_timestamp = u128::from_be_bytes(payload[16..32].try_into().expect("slice with incorrect length"));
 
-            println!("Decided what request should be, calling audio.");
             
             self.audio.play_at(to_set_timestamp, when_to_play_timestamp).await;
 
-            println!("Done calling audio");
 
         } else if line.starts_with("pause") {
             self.audio.pause();
