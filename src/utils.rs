@@ -30,7 +30,7 @@ pub fn extract_payload(
 
 	// check the nonce. we will need this to decrypt
 	let nonce_slice = &datagram[4..16];
-    let nonce = aes_gcm::aead::Nonce::<Aes128Gcm>::from_slice(nonce_slice);
+	let nonce: &aes_gcm::aead::Nonce<Aes128Gcm> = nonce_slice.try_into().expect("invalid nonce length");
 
 	let mut content_vec = datagram[16..].to_vec();
 	let _ = cipher.decrypt_in_place(nonce, b"", &mut content_vec);

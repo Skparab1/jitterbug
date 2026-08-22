@@ -60,7 +60,9 @@ impl Client {
         let Some((host, port)) = address.split_once(':') else { todo!() };
         
         let decoded_key = STANDARD.decode(key).expect("Failed to decode key");
-        let pre_shared_key = Key::<Aes128Gcm>::from_slice(decoded_key.as_slice());
+        let pre_shared_key: &Key<Aes128Gcm> = decoded_key.as_slice()
+            .try_into()
+            .expect("invalid pre-shared key length");
         let cipher = Aes128Gcm::new(pre_shared_key);
 
         let server_host = host.to_string();

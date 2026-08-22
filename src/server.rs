@@ -1,6 +1,4 @@
 use tokio::net::UdpSocket;
-use tokio::io::{self, BufReader, AsyncBufReadExt};
-
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 
@@ -14,7 +12,6 @@ use crate::utils::{extract_payload, send_datagram};
 use crate::audio::Audio;
 
 use crate::tui::SimpleUI;
-use tokio::sync::watch;
 
 
 // clean up the imports later
@@ -150,7 +147,7 @@ impl Server {
             let received_nonce = unwrapped_content[5..].to_vec(); // the first 5 bytes are packet type and seq number, the rest is the nonce
 
             // a bit strange but just keep the mutable borrow within a narrower scope
-            let sequence_number = {
+            {
                 let entry = self.connections.entry(sender_addr).or_insert(ConnectionState {
                     sequence_number: 1, // just the syn
                     acked_signal: false,
@@ -159,8 +156,6 @@ impl Server {
                 entry.sequence_number += 1;
 
                 send_datagram(&self.cipher, &self.listener, &sender_addr, packet_types::CONNECTION_ACK, &entry.sequence_number.to_be_bytes(), &received_nonce).await?;
-
-                entry.sequence_number
             }; 
 
             self.ui.render_current_clients(&self.connections);

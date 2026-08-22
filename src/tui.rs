@@ -1,7 +1,7 @@
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
+    style::{Color, Style},
     widgets::{Block, Borders, Paragraph},
     Terminal,
 };
@@ -75,11 +75,11 @@ impl SimpleUI {
         // keep into account things
         self.queue.clear();
 
-        if (current.is_empty() && loading.is_none() && queue.is_empty()) {
+        if current.is_empty() && loading.is_none() && queue.is_empty() {
             self.queue.push("--".to_string());
         }
 
-        if (!current.is_empty()) {
+        if !current.is_empty() {
             self.queue.push(format!("> {}", current.clone()));
             self.current_track = current.clone();
         }
@@ -182,7 +182,7 @@ impl SimpleUI {
                 Constraint::Min(3), // Queue
             ];  
 
-        if (self.is_server) {
+        if self.is_server {
             constraints.push(Constraint::Min(3)); // Clients
             constraints.push(Constraint::Length(3)); // Command Input Box
         }
@@ -190,7 +190,7 @@ impl SimpleUI {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints(constraints)
-                .split(f.size());
+                .split(f.area());
 
             // Status
             let status_content = format!("Pairing Key: \t{}\nStatus: \t{}", self.pairing_key, self.status);

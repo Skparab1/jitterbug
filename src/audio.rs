@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::collections::VecDeque;
 
 use anyhow::{Context, Result};
-use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player};
+use rodio::{Decoder, DeviceSinkBuilder, Player};
 use yt_dlp::Downloader;
 
 use crate::constants::{packet_types};
@@ -27,7 +27,6 @@ pub struct Audio {
 
     queue: VecDeque<Track>,
 
-    handle: MixerDeviceSink,
     player: Player,
     output_file_path: String,
 }
@@ -56,7 +55,6 @@ impl Audio {
             current: None,
             queue,
 
-            handle,
             player,
             
             output_file_path,
