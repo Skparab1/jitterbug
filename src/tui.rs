@@ -128,7 +128,7 @@ impl SimpleUI {
         let symbol = if is_playing { "▶" } else { "⏸" };
 
         let status_msg = format!(
-            " {} | {:02}:{:02} {} {:02}:{:02} | Volume: {}%",
+            " {} | {:02}:{:02} {} {:02}:{:02} | Vol: {}%",
             symbol,
             pos_secs / 60,
             pos_secs % 60,

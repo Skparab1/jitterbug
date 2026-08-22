@@ -219,18 +219,21 @@ impl Audio {
 
     pub async fn play_at(&self, to_set_timestamp: u128, when_to_play_timestamp: u128){
 
-        // println!("PlayAt invoked");
+        println!("PlayAt invoked");
+
+        println!("Seeking to timestamp: {} ms", to_set_timestamp);
         
         let _ = self.player.try_seek(Duration::from_secs((to_set_timestamp / 1000) as u64));
 
-        // println!("Seeked to: {} ms", to_set_timestamp);
+        println!("Seeked to: {} ms", to_set_timestamp);
 
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
             .as_millis();
 
-        // println!("Now will wait until: {} ms", when_to_play_timestamp);
+        println!("Now will wait until: {} ms", when_to_play_timestamp);
+        println!("Current time is: {} ms", now_ms);
 
         if when_to_play_timestamp > now_ms {
             let ms_to_wait = (when_to_play_timestamp - now_ms) as u64;
@@ -240,7 +243,7 @@ impl Audio {
             sleep_until(deadline).await;
         }
 
-        // println!("Wait time elapsed. Now playing...");
+        println!("Wait time elapsed. Now playing...");
 
         self.play();
 
