@@ -7,6 +7,7 @@ use crate::constants::{packet_types, ConnectionState, SERVER_HOST, SERVER_PORT};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::str::FromStr;
+use std::time::Duration;
 
 use crate::utils::{extract_payload, send_datagram};
 use crate::audio::Audio;
@@ -202,6 +203,42 @@ impl Server {
             send_packet_type = packet_types::AUDIO_FWD;
         } else if line.starts_with("backward") {
             send_packet_type = packet_types::AUDIO_BACK;
+        } else if line.starts_with("move ") {
+            // move to a timestamp
+
+            let timestamp = if (line[5..]).contains(':') {
+                let parts: Vec<&str> = line[5..].split(':').collect();
+                if parts.len() != 2 {
+                    self.ui.set_status("ERR: Invalid timestamp. Use mm:ss or seconds.");
+                    return Ok(());
+                }
+                let minutes = u128::from_str(parts[0]).expect("Invalid minutes");
+                let seconds = u128::from_str(parts[1]).expect("Invalid seconds");
+                minutes * 60 + seconds
+            } else {
+                u128::from_str(&line[5..]).expect("ERR: Invalid timestamp. Use mm:ss or seconds.")
+            };
+
+            if timestamp > self.audio.get_duration().as_millis() / 1000 { // this should be in seconds
+                self.ui.set_status("ERR: Timestamp exceeds track duration.");
+                return Ok(());
+            }
+
+            send_packet_type = packet_types::AUDIO_PLAY;
+                        
+            let current_pos = Duration::from_millis((timestamp * 1000) as u64);
+            let current_pos_bytes = current_pos.as_millis().to_be_bytes();
+            payload.extend_from_slice(&current_pos_bytes);
+
+            let play_time = std::time::SystemTime::now() + std::time::Duration::from_millis(500);
+
+            let play_time_millis = play_time.duration_since(std::time::UNIX_EPOCH)?.as_millis();
+            let play_time_bytes = play_time_millis.to_be_bytes();
+
+            payload.extend_from_slice(&play_time_bytes);
+            // hereafter, move and play are treated as the same
+
+
         } else if line.starts_with("vol ") {
 
             send_packet_type = packet_types::AUDIO_VOL;
@@ -253,7 +290,7 @@ impl Server {
         } else if line.starts_with("swap") {
             let _ = self.audio.swap();
             self.ui.update_queue(self.audio.get_queue_titles(), self.audio.get_current_track_title().unwrap_or_default(), None);
-        } else if line.starts_with("play") {
+        } else if line.starts_with("play") || line.starts_with("move ") {
             let to_set_timestamp = u128::from_be_bytes(payload[0..16].try_into().expect("slice with incorrect length"));
             let when_to_play_timestamp = u128::from_be_bytes(payload[16..32].try_into().expect("slice with incorrect length"));
 
