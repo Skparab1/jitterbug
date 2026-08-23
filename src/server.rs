@@ -282,14 +282,14 @@ impl Server {
         // send it to our own audio module
         if line.starts_with("load ") {
             self.ui.set_status("Loading track...");
-            self.ui.update_queue(self.audio.get_queue_titles(), self.audio.get_current_track_title().unwrap_or_default(), line[5..].to_string().into());
+            self.ui.add_to_loading_queue(line[5..].to_string());
             self.ui.render_current_clients(&self.connections);
-            self.audio.load(line[5..].as_ref()).await?;
-            self.ui.update_queue(self.audio.get_queue_titles(), self.audio.get_current_track_title().unwrap_or_default(), None);
-            self.ui.render_current_clients(&self.connections);
+            self.audio.start_load(line[5..].as_ref());
+
         } else if line.starts_with("swap") {
             let _ = self.audio.swap();
-            self.ui.update_queue(self.audio.get_queue_titles(), self.audio.get_current_track_title().unwrap_or_default(), None);
+            self.ui.update_queue(self.audio.get_queue_titles());
+            self.ui.update_current_track(self.audio.get_current_track_title());
         } else if line.starts_with("play") || line.starts_with("move ") {
             let to_set_timestamp = u128::from_be_bytes(payload[0..16].try_into().expect("slice with incorrect length"));
             let when_to_play_timestamp = u128::from_be_bytes(payload[16..32].try_into().expect("slice with incorrect length"));
@@ -347,6 +347,24 @@ impl Server {
                     let volume = self.audio.get_volume();
 
                     self.ui.update_audio_status(pos, duration, volume, self.audio.is_playing());
+                }
+
+                result = self.audio.next_load_result() => {
+                    match result {
+                        Some(Ok(track)) => {
+                            let title = track.title.clone();
+                            let youtube_url = track.youtube_url.clone();
+                            self.audio.push_loaded_track(track);
+                            self.ui.set_status(format!("Loaded track: {}", title));
+                            self.ui.remove_from_loading_queue(youtube_url);
+                            self.ui.update_queue(self.audio.get_queue_titles());
+                            self.ui.render_current_clients(&self.connections);
+                        }
+                        Some(Err(e)) => {
+                            self.ui.set_status(format!("Load failed: {e:#}"));
+                        }
+                        None => {} // something strange happened
+                    }
                 }
             }
         }      

@@ -129,40 +129,82 @@ impl Client {
 
     pub async fn receive_instructions(&mut self) -> anyhow::Result<()> {
         let mut buffer = [0u8; 264];
-
         let mut audio_ticker = tokio::time::interval(std::time::Duration::from_millis(1000));
 
         loop {
             tokio::select! {
-                // Branch 1: Receive bytes from the network
-                result = self.receive_bytes(&mut buffer) => {
+                result = self.socket.recv_from(&mut buffer) => {
                     let (bytes_read, sender_addr) = result?;
-
-                    let response: Option<Vec<u8>> = extract_payload(&self.cipher, &buffer[..bytes_read], packet_types::AUDIO_ANY, self.sequence_number + 1);
-
-                    if response.is_some() {
-                        let payload = response.unwrap();
-                        let packet_type = payload[0];
-                        let packet_text = packet_type_to_text(packet_type);
-
-                        self.ui.set_status(format!("Received datagram of type {} from {}", packet_text, sender_addr));
-                        self.sequence_number += 1;
-                        self.action_audio_instruction(packet_type, payload[5..].to_vec()).await?;
-                    } else {
-                        println!("Error: Failed to extract payload from datagram");
-                    }    
+                    self.handle_network_packet(&buffer[..bytes_read], sender_addr).await?;
                 },
 
-                // Branch 2: Handle the audio ticker (Notice the comma at the end!)
                 _ = audio_ticker.tick() => {
-                    let pos = self.audio.get_pos();
-                    let duration = self.audio.get_duration();
-                    let volume = self.audio.get_volume();
-
-                    self.ui.update_audio_status(pos, duration, volume, self.audio.is_playing());
+                    self.handle_audio_ticker();
                 },
+
+                result = self.audio.next_load_result() => {
+                    self.handle_audio_load(result).await?;
+                }
             }
         }
+    }
+
+    async fn handle_network_packet(&mut self, packet_data: &[u8], sender_addr: std::net::SocketAddr) -> anyhow::Result<()> {
+        let response: Option<Vec<u8>> = extract_payload(
+            &self.cipher, 
+            packet_data, 
+            packet_types::AUDIO_ANY, 
+            self.sequence_number + 1
+        );
+
+        if let Some(payload) = response {
+            let packet_type = payload[0];
+            let packet_text = packet_type_to_text(packet_type);
+
+            self.ui.set_status(format!("Received datagram of type {} from {}", packet_text, sender_addr));
+            self.sequence_number += 1;
+            self.action_audio_instruction(packet_type, payload[5..].to_vec()).await?;
+        } else {
+            println!("Error: Failed to extract payload from datagram");
+        }
+
+        Ok(())
+    }
+
+    fn handle_audio_ticker(&mut self) {
+        let pos = self.audio.get_pos();
+        let duration = self.audio.get_duration();
+        let volume = self.audio.get_volume();
+
+        self.ui.update_audio_status(pos, duration, volume, self.audio.is_playing());
+    }
+
+    async fn handle_audio_load(&mut self, result: Option<anyhow::Result<crate::audio::Track>>) -> anyhow::Result<()> {        
+        match result {
+            Some(Ok(track)) => {
+                let title = track.title.clone();
+                self.ui.set_status(format!("Loaded track: {}", title));
+                self.ui.remove_from_loading_queue(track.youtube_url.clone());
+                self.ui.update_queue(self.audio.get_queue_titles());
+
+                self.audio.push_loaded_track(track);
+
+                let frame = create_frame(
+                    &self.cipher, 
+                    packet_types::LOADED_ACK, 
+                    &self.sequence_number.to_be_bytes(), 
+                    None
+                ).await?;
+                
+                self.send_message_bytes(&frame).await?;
+                self.sequence_number += 1;
+            }
+            Some(Err(e)) => { 
+                self.ui.set_status(format!("Load failed: {e:#}")); 
+            }
+            None => {} 
+        }
+        Ok(())
     }
 
     pub async fn action_audio_instruction(&mut self, packet_type: u8, payload: Vec<u8>) -> anyhow::Result<()> {
@@ -194,22 +236,15 @@ impl Client {
                 println!("audio swap failed: {err:#}");
             }
 
-            self.ui.update_queue(self.audio.get_queue_titles(), self.audio.get_current_track_title().unwrap_or_default(), None);
+            self.ui.update_queue(self.audio.get_queue_titles());
+            self.ui.update_current_track(self.audio.get_current_track_title());
 
         } else if packet_type == packet_types::AUDIO_LOAD {
             let decoded: &str = std::str::from_utf8(&payload)?;
 
-            self.ui.update_queue(self.audio.get_queue_titles(), self.audio.get_current_track_title().unwrap_or_default(), Some(decoded.to_string()));
+            self.ui.add_to_loading_queue(decoded.to_string());
+            self.audio.start_load(decoded);
 
-            let _ = self.audio.load(decoded).await;
-            // after it loads, send the ack.
-
-            self.ui.update_queue(self.audio.get_queue_titles(), self.audio.get_current_track_title().unwrap_or_default(), None);
-
-            let frame = create_frame(&self.cipher, packet_types::LOADED_ACK, &self.sequence_number.to_be_bytes(), None).await?;
-            self.send_message_bytes(&frame).await?;
-
-            self.sequence_number += 1;
         } else if packet_type == packet_types::AUDIO_VOL {
             let vol_level = u128::from_be_bytes(payload[0..16].try_into()?);
             self.audio.set_volume(vol_level);

@@ -28,6 +28,7 @@ pub struct SimpleUI {
 
     current_track: String,
     queue: Vec<String>,
+    loading_queue: Vec<String>,
     clients: HashMap<String, String>,
     audio_info: String,
 
@@ -51,6 +52,7 @@ impl SimpleUI {
             status: "Ready to pair".to_string(),
             current_track: "--".to_string(),
             queue: Vec::new(),
+            loading_queue: Vec::new(),
 
             clients: HashMap::new(),
             audio_info: "".to_string(),
@@ -62,38 +64,32 @@ impl SimpleUI {
         Ok(ui)
     }
 
-
     // at some point make redraw return a void so we dont have all these _'s
-    // we have 3 parts to this: the actual queue (most of the things)
-    // current (not in the queue)
-    // loading (not in the queue yet)
-    pub fn update_queue(&mut self, queue: Vec<String>, current: String, loading: Option<String>) {
-
-        // println!("Updating queue: current: {}, loading: {:?}", current, loading);
-        // println!("Queue: {:?}", queue);
-
+    pub fn update_queue(&mut self, queue: Vec<String>) {
         // keep into account things
         self.queue.clear();
-
-        if current.is_empty() && loading.is_none() && queue.is_empty() {
-            self.queue.push("--".to_string());
-        }
-
-        if !current.is_empty() {
-            self.queue.push(format!("> {}", current.clone()));
-            self.current_track = current.clone();
-        }
 
         for track in queue.iter() {
             self.queue.push(format!("  {}", track.clone()));
         }
 
-        if let Some(loading_track) = loading {
-            self.queue.push(format!("* {}", loading_track));
-        }
-
         // println!("Queue after update: {:?}", self.queue);
 
+        let _ = self.redraw();
+    }
+
+    pub fn update_current_track(&mut self, track: Option<String>) {
+        self.current_track = track.unwrap_or_else(|| "--".to_string());
+        let _ = self.redraw();
+    }
+
+    pub fn add_to_loading_queue(&mut self, track: String) {
+        self.loading_queue.push(format!("* {}", track));
+        let _ = self.redraw();
+    }
+
+    pub fn remove_from_loading_queue(&mut self, track: String) {
+        self.loading_queue.retain(|t| t != &format!("* {}", track));
         let _ = self.redraw();
     }
 
@@ -207,12 +203,23 @@ impl SimpleUI {
             f.render_widget(track_widget, chunks[1]);
 
             // Track Queue
-            let queue_display = if self.queue.is_empty() {
-                "--".to_string()
+            let current_track_display = if self.current_track != "--" {
+                format!("> {}\n", self.current_track)
             } else {
-                self.queue.join("\n")
+                "".to_string()
             };
-            let queue_widget = Paragraph::new(queue_display)
+            let queue_display = if self.queue.is_empty() {
+                "".to_string()
+            } else {
+                format!("{}\n", self.queue.join("\n"))
+            };
+            let loading_queue_display = if self.loading_queue.is_empty() {
+                "".to_string()
+            } else {
+                self.loading_queue.join("\n")
+            };
+            let combined_queue_display = format!("{}{}{}", current_track_display, queue_display, loading_queue_display);
+            let queue_widget = Paragraph::new(combined_queue_display)
                 .block(Block::default().borders(Borders::ALL).title(" Track Queue "))
                 .style(Style::default().fg(Color::Blue));
             f.render_widget(queue_widget, chunks[2]);
