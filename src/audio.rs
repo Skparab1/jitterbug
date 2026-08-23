@@ -20,6 +20,7 @@ pub struct Track {
     pub youtube_url: String,
     pub duration: Option<i64>, // seconds
     path: PathBuf,
+    pub seen_order: u64, // to keep order
 }
 
 pub struct Audio {
@@ -37,6 +38,8 @@ pub struct Audio {
 
     load_tx: mpsc::UnboundedSender<Result<Track>>,
     load_rx: mpsc::UnboundedReceiver<Result<Track>>,
+
+    seen_tracks: u64, // to keep order
 }
 
 impl Audio {
@@ -67,6 +70,8 @@ impl Audio {
             output_file_path,
             load_tx,
             load_rx,
+
+            seen_tracks: 0,
         })    
     }   
 
@@ -120,8 +125,11 @@ impl Audio {
         let url = url.to_string();
         let tx = self.load_tx.clone();
 
+        let seen_tracks = self.seen_tracks;
+        self.seen_tracks += 1;
+
         tokio::spawn(async move {
-            let result = Self::download_track(downloader, output_file_path, url).await;
+            let result = Self::download_track(downloader, output_file_path, url, seen_tracks).await;
             let _ = tx.send(result);
         });
     }
@@ -131,10 +139,15 @@ impl Audio {
     }
 
     pub fn push_loaded_track(&mut self, track: Track) {
-        self.queue.push_back(track);
+        let should_be_at_pos = track.seen_order as usize;
+        if should_be_at_pos <= self.queue.len() {
+            self.queue.insert(should_be_at_pos, track);
+        } else {
+            self.queue.push_back(track); 
+        }
     }
 
-    pub async fn download_track(downloader: Arc<Downloader>, output_file_path: String, url: String) -> Result<Track> {
+    pub async fn download_track(downloader: Arc<Downloader>, output_file_path: String, url: String, seen_order: u64) -> Result<Track> {
         // println!("Loading ...");
 
         let video = downloader.fetch_video_infos(url.to_string())
@@ -182,7 +195,7 @@ impl Audio {
 
         // println!("Loaded track: {}", title);
 
-        Ok(Track { title, youtube_url: url, duration, path: final_path })
+        Ok(Track { title, youtube_url: url, duration, path: final_path, seen_order })
     }
 
     pub fn swap(&mut self) -> Result<()> {

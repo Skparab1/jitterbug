@@ -185,9 +185,9 @@ impl Client {
                 let title = track.title.clone();
                 self.ui.set_status(format!("Loaded track: {}", title));
                 self.ui.remove_from_loading_queue(track.youtube_url.clone());
-                self.ui.update_queue(self.audio.get_queue_titles());
-
                 self.audio.push_loaded_track(track);
+
+                self.ui.update_queue(self.audio.get_queue_titles());
 
                 let frame = create_frame(
                     &self.cipher, 
