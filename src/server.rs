@@ -1,6 +1,4 @@
 use tokio::net::UdpSocket;
-use tokio::io::{self, BufReader, AsyncBufReadExt};
-
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 
@@ -9,12 +7,12 @@ use crate::constants::{packet_types, ConnectionState, SERVER_HOST, SERVER_PORT};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::str::FromStr;
+use std::time::Duration;
 
 use crate::utils::{extract_payload, send_datagram};
 use crate::audio::Audio;
 
 use crate::tui::SimpleUI;
-use tokio::sync::watch;
 
 
 // clean up the imports later
@@ -150,7 +148,7 @@ impl Server {
             let received_nonce = unwrapped_content[5..].to_vec(); // the first 5 bytes are packet type and seq number, the rest is the nonce
 
             // a bit strange but just keep the mutable borrow within a narrower scope
-            let sequence_number = {
+            {
                 let entry = self.connections.entry(sender_addr).or_insert(ConnectionState {
                     sequence_number: 1, // just the syn
                     acked_signal: false,
@@ -159,8 +157,6 @@ impl Server {
                 entry.sequence_number += 1;
 
                 send_datagram(&self.cipher, &self.listener, &sender_addr, packet_types::CONNECTION_ACK, &entry.sequence_number.to_be_bytes(), &received_nonce).await?;
-
-                entry.sequence_number
             }; 
 
             self.ui.render_current_clients(&self.connections);
@@ -185,6 +181,7 @@ impl Server {
         } else if line.starts_with("swap") {
             send_packet_type = packet_types::AUDIO_SWAP;
         } else if line.starts_with("play") {
+
             send_packet_type = packet_types::AUDIO_PLAY;
             // need to record the audio timestamp where to start playing
             
@@ -199,12 +196,49 @@ impl Server {
 
             payload.extend_from_slice(&play_time_bytes);
 
+
         } else if line.starts_with("pause") {
             send_packet_type = packet_types::AUDIO_PAUSE;
         } else if line.starts_with("forward") {
             send_packet_type = packet_types::AUDIO_FWD;
         } else if line.starts_with("backward") {
             send_packet_type = packet_types::AUDIO_BACK;
+        } else if line.starts_with("move ") {
+            // move to a timestamp
+
+            let timestamp = if (line[5..]).contains(':') {
+                let parts: Vec<&str> = line[5..].split(':').collect();
+                if parts.len() != 2 {
+                    self.ui.set_status("ERR: Invalid timestamp. Use mm:ss or seconds.");
+                    return Ok(());
+                }
+                let minutes = u128::from_str(parts[0]).expect("Invalid minutes");
+                let seconds = u128::from_str(parts[1]).expect("Invalid seconds");
+                minutes * 60 + seconds
+            } else {
+                u128::from_str(&line[5..]).expect("ERR: Invalid timestamp. Use mm:ss or seconds.")
+            };
+
+            if timestamp > self.audio.get_duration().as_millis() / 1000 { // this should be in seconds
+                self.ui.set_status("ERR: Timestamp exceeds track duration.");
+                return Ok(());
+            }
+
+            send_packet_type = packet_types::AUDIO_PLAY;
+                        
+            let current_pos = Duration::from_millis((timestamp * 1000) as u64);
+            let current_pos_bytes = current_pos.as_millis().to_be_bytes();
+            payload.extend_from_slice(&current_pos_bytes);
+
+            let play_time = std::time::SystemTime::now() + std::time::Duration::from_millis(500);
+
+            let play_time_millis = play_time.duration_since(std::time::UNIX_EPOCH)?.as_millis();
+            let play_time_bytes = play_time_millis.to_be_bytes();
+
+            payload.extend_from_slice(&play_time_bytes);
+            // hereafter, move and play are treated as the same
+
+
         } else if line.starts_with("vol ") {
 
             send_packet_type = packet_types::AUDIO_VOL;
@@ -248,19 +282,21 @@ impl Server {
         // send it to our own audio module
         if line.starts_with("load ") {
             self.ui.set_status("Loading track...");
-            self.ui.update_queue(self.audio.get_queue_titles(), self.audio.get_current_track_title().unwrap_or_default(), line[5..].to_string().into());
+            self.ui.add_to_loading_queue(line[5..].to_string());
             self.ui.render_current_clients(&self.connections);
-            self.audio.load(line[5..].as_ref()).await?;
-            self.ui.update_queue(self.audio.get_queue_titles(), self.audio.get_current_track_title().unwrap_or_default(), None);
-            self.ui.render_current_clients(&self.connections);
+            self.audio.start_load(line[5..].as_ref());
+
         } else if line.starts_with("swap") {
             let _ = self.audio.swap();
-            self.ui.update_queue(self.audio.get_queue_titles(), self.audio.get_current_track_title().unwrap_or_default(), None);
-        } else if line.starts_with("play") {
+            self.ui.update_queue(self.audio.get_queue_titles());
+            self.ui.update_current_track(self.audio.get_current_track_title());
+        } else if line.starts_with("play") || line.starts_with("move ") {
             let to_set_timestamp = u128::from_be_bytes(payload[0..16].try_into().expect("slice with incorrect length"));
             let when_to_play_timestamp = u128::from_be_bytes(payload[16..32].try_into().expect("slice with incorrect length"));
+
             
             self.audio.play_at(to_set_timestamp, when_to_play_timestamp).await;
+
 
         } else if line.starts_with("pause") {
             self.audio.pause();
@@ -311,6 +347,24 @@ impl Server {
                     let volume = self.audio.get_volume();
 
                     self.ui.update_audio_status(pos, duration, volume, self.audio.is_playing());
+                }
+
+                result = self.audio.next_load_result() => {
+                    match result {
+                        Some(Ok(track)) => {
+                            let title = track.title.clone();
+                            let youtube_url = track.youtube_url.clone();
+                            self.audio.push_loaded_track(track);
+                            self.ui.set_status(format!("Loaded track: {}", title));
+                            self.ui.remove_from_loading_queue(youtube_url);
+                            self.ui.update_queue(self.audio.get_queue_titles());
+                            self.ui.render_current_clients(&self.connections);
+                        }
+                        Some(Err(e)) => {
+                            self.ui.set_status(format!("Load failed: {e:#}"));
+                        }
+                        None => {} // something strange happened
+                    }
                 }
             }
         }      

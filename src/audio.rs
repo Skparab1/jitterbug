@@ -1,9 +1,11 @@
 use std::fs;
 use std::path::PathBuf;
 use std::collections::VecDeque;
+use std::sync::Arc;
+use tokio::sync::mpsc;
 
 use anyhow::{Context, Result};
-use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player};
+use rodio::{Decoder, DeviceSinkBuilder, Player, MixerDeviceSink};
 use yt_dlp::Downloader;
 
 use crate::constants::{packet_types};
@@ -13,23 +15,31 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::{sleep_until, Duration, Instant};
 use tokio::process::Command;
 
-struct Track {
-    title: String,
-    duration: Option<i64>, // seconds
+pub struct Track {
+    pub title: String,
+    pub youtube_url: String,
+    pub duration: Option<i64>, // seconds
     path: PathBuf,
+    pub seen_order: u64, // to keep order
 }
 
 pub struct Audio {
-    downloader: Downloader,
+    downloader: Arc<Downloader>,
 
     // current content
     current: Option<Track>,
 
     queue: VecDeque<Track>,
 
-    handle: MixerDeviceSink,
+    _handle: MixerDeviceSink,
+
     player: Player,
     output_file_path: String,
+
+    load_tx: mpsc::UnboundedSender<Result<Track>>,
+    load_rx: mpsc::UnboundedReceiver<Result<Track>>,
+
+    seen_tracks: u64, // to keep order
 }
 
 impl Audio {
@@ -37,29 +47,31 @@ impl Audio {
         let libs_dir = PathBuf::from("libs");
         let output_dir = PathBuf::from(&output_file_path);
 
-
         let downloader = Downloader::with_new_binaries(libs_dir.clone(), output_dir.clone())
-        .await?
-        .with_cookies_from_browser("chrome") // or "firefox", "safari", etc.
-        .build()
-        .await?;
+            .await?
+            .with_cookies_from_browser("chrome")
+            .build()
+            .await?;
         
-
+        // this handle must be kept alive after the init, otherwise playing
         let handle = DeviceSinkBuilder::open_default_sink()?;
         let player = Player::connect_new(&handle.mixer());
-
-        let queue = VecDeque::new();
+        let (load_tx, load_rx) = mpsc::unbounded_channel();
 
         Ok(Self {
-            downloader,
+            downloader: Arc::new(downloader),
             
             current: None,
-            queue,
+            queue: VecDeque::new(),
+            _handle: handle,
 
-            handle,
             player,
             
             output_file_path,
+            load_tx,
+            load_rx,
+
+            seen_tracks: 0,
         })    
     }   
 
@@ -107,17 +119,44 @@ impl Audio {
         Ok(true)
     }
 
-   pub async fn load(&mut self, url: &str) -> Result<()> {
+    pub fn start_load(&mut self, url: &str) {
+        let downloader = Arc::clone(&self.downloader);
+        let output_file_path = self.output_file_path.clone();
+        let url = url.to_string();
+        let tx = self.load_tx.clone();
+
+        let seen_tracks = self.seen_tracks;
+        self.seen_tracks += 1;
+
+        tokio::spawn(async move {
+            let result = Self::download_track(downloader, output_file_path, url, seen_tracks).await;
+            let _ = tx.send(result);
+        });
+    }
+
+    pub async fn next_load_result(&mut self) -> Option<Result<Track>> {
+        self.load_rx.recv().await
+    }
+
+    pub fn push_loaded_track(&mut self, track: Track) {
+        let should_be_at_pos = track.seen_order as usize;
+        if should_be_at_pos <= self.queue.len() {
+            self.queue.insert(should_be_at_pos, track);
+        } else {
+            self.queue.push_back(track); 
+        }
+    }
+
+    pub async fn download_track(downloader: Arc<Downloader>, output_file_path: String, url: String, seen_order: u64) -> Result<Track> {
         // println!("Loading ...");
 
-        let video = self.downloader.fetch_video_infos(url.to_string())
+        let video = downloader.fetch_video_infos(url.to_string())
             .await.context("failed to fetch video metadata")?;
         
-        let _video_id = &video.id;
         let title = video.title.clone();
         let duration = video.duration;
 
-        let output_dir = PathBuf::from(self.output_file_path.clone());
+        let output_dir = PathBuf::from(&output_file_path);
         fs::create_dir_all(&output_dir)?;
 
         let output_template = output_dir.join("%(id)s.%(ext)s");
@@ -133,7 +172,7 @@ impl Audio {
             .arg("firefox")
             .arg("-o")
             .arg(output_template.to_string_lossy().to_string())
-            .arg(url)
+            .arg(&url)
             .output()
             .await
             .context("failed to execute yt-dlp subprocess")?;
@@ -156,13 +195,7 @@ impl Audio {
 
         // println!("Loaded track: {}", title);
 
-        self.queue.push_back(Track {
-            title,
-            duration,
-            path: final_path,
-        });
-
-        Ok(())
+        Ok(Track { title, youtube_url: url, duration, path: final_path, seen_order })
     }
 
     pub fn swap(&mut self) -> Result<()> {
@@ -220,19 +253,15 @@ impl Audio {
     }
 
     pub async fn play_at(&self, to_set_timestamp: u128, when_to_play_timestamp: u128){
-
-        // println!("PlayAt invoked");
         
         let _ = self.player.try_seek(Duration::from_secs((to_set_timestamp / 1000) as u64));
 
-        // println!("Seeked to: {} ms", to_set_timestamp);
 
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
             .as_millis();
 
-        // println!("Now will wait until: {} ms", when_to_play_timestamp);
 
         if when_to_play_timestamp > now_ms {
             let ms_to_wait = (when_to_play_timestamp - now_ms) as u64;
@@ -241,8 +270,6 @@ impl Audio {
             let deadline = Instant::now() + Duration::from_millis(ms_to_wait);
             sleep_until(deadline).await;
         }
-
-        // println!("Wait time elapsed. Now playing...");
 
         self.play();
 
