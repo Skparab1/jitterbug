@@ -3,7 +3,7 @@ A network protocol and terminal application for orchestrating synchronized audio
 
 # Purpose
 Making audio play at the exact same time on multiple devices is difficult. Differences in network speed and operating system make perfect synchronization challenging, often leading to chaotic echos and discernable lag.
-This project has each client independently load audio content over third party,
+This project aims to reduce jitter by syncing at a lower level, getting closer to the actual audio output. It involves using one device as a server, which instructs independent clients to load and play audio. The playback is orchestrated over a custom protocol (see below).
 
 # How to use
 
@@ -14,14 +14,29 @@ brew install ffmpeg
 brew install yt-dlp
 ```
 
-## Server commands
+## Initialization
 - Spin up a server
 ```bash
-cargo run --bin server
+cargo server
+```
+- Spin up clients
+```bash
+cargo client
 ```
 
-- Commands:
-    - `load <youtube URL>`: Downloads an audio file for the
+## Usage
+- Connect clients to the server by entering the sharing key.
+- Use the following commands on the server input:
+    - `load <youtube URL>`: Download an audio file for the given URL.
+    - `swap`: Swap in the next track in the queue and buffer it to 00:00. Delete the downloaded file of the previous track.
+    - `play`: Play the current track.
+    - `pause`: Pause the current track.
+    - `forward`: Skip forward 5 seconds.
+    - `backward`: Skip backward 5 seconds.
+    - `vol <0-100>`: Set the volume to the given percentage.
+    - `move <seconds or mm:ss>`: Move to the given timestamp.
+- Concurrency is (mostly) supported. Multiple audio files can be loaded simultaneously, and play/pause/volume and 
+other instant commands can be used while a track is loading.
 
 
 # Inspiration
@@ -53,4 +68,9 @@ The basic flow for playback syncing is as follows:
 - Verify: The client verifies that returned nonce matches, and confirms the connection
 
 ## Terminal Application
-- Made using ratatui
+- The terminal UI is made using Ratatui. It has the following components
+    - Status: States what's just happened, for example loaded a track or received an instruction.
+    - Now Playing: The current track, playing/paused status, progress bar of duration, and volume.
+    - Track Queue: Queue of next tracks, with `>` indicating the current track and `*` indicating a loading track.
+    - Clients (server only): List of connected clients, and whether they have loaded the most recently requested track.
+    - Input (server only): Enter commands like load, play, pause.
