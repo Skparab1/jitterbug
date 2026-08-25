@@ -11,7 +11,12 @@ This project aims to reduce jitter by syncing at a lower level, getting closer t
 - Async Rust (Tokio) with background task decoupling for downloading (does not block the TUI).
 - Ratatui terminal UI with live client and queue status.
 
-![Picture of a terminal UI. Includes Status, Now Playing, Track Queue, Clients, and Input information, see Terminal UI section.](./assets/tui.png)
+<figure>
+  <img src="./assets/tui.png" alt="Picture of a terminal UI. Includes Status, Now Playing, Track Queue, Clients, and Input information, see Terminal UI section.">
+  <figcaption align="center">A server connected to 6 clients, 2 of which are on the same device.</figcaption>
+</figure>
+
+
 
 
 # How to use
@@ -19,9 +24,10 @@ This project aims to reduce jitter by syncing at a lower level, getting closer t
 ## Dependencies
 - The following dependencies are necessary
     - Rust (1.85+)
-    - ffmpeg
-    - yt-dlp
-- You must being logged into YouTube in Chrome (or similar browser), due to CDN restrictions. When running, the program will ask to access the necessary cookies. If you use a browser other than chrome, change the 
+    - ffmpeg ```brew install ffmpeg``` or ```winget install yt-dlp```
+    - yt-dlp ```brew install yt-dlp``` or ```winget install -e --id Gyan.FFmpeg```
+- If a download failes with `403`, run `yt-dlp -U` to update yt-dlp. Youtube's extraction requirements change frequently, but yt-dlp is on top of adapting to them.
+- You must be logged into YouTube in Chrome (or similar browser), due to CDN restrictions. When running, the program will ask to access the necessary cookies. If you use a browser other than chrome, change the BROWSER constant in `src/constants.rs` to your prefered browser.
 
 ## Initialization
 - Spin up a server
@@ -54,10 +60,11 @@ This project was inpired a longstanding want for a simple music syncing tool. I'
 
 # How it works
 ## Playback
-The basic flow for playback syncing is as follows: 
-- The server sends a `load <URL>` command. This tells the client: "independently download the audio content from the given URL, and report when done". The client reports when the file is downloaded, and adds it to its queue.
-- The server sends a `swap` command. This tells the client: "swap in the file at the top of the queue and buffer it to 00:00. Be ready for my play signal".
-- The server sends a `play` command. This signal comes with a specific playback timestamp (like 01:11) and a unix timestamp. This tells the client: "wait until `unix timestamp`, then play the current audio at `timestamp`".
+- One instruction orchestrates independent client tasks, each running its own async event loop with background-decoupled downloads.
+- Playback flow:
+    - The server sends a `load <URL>` command. This tells the client: "independently download the audio content from the given URL, and report when done". The client reports when the file is downloaded, and adds it to its queue.
+    - The server sends a `swap` command. This tells the client: "swap in the file at the top of the queue and buffer it to 00:00. Be ready for my play signal".
+    - The server sends a `play` command. This signal comes with a specific playback timestamp (like 01:11) and a unix timestamp. This tells the client: "wait until `unix timestamp`, then play the current audio at `timestamp`".
 - Instructions like volume, and pause are actioned immediately.
 
 ## Protocol
@@ -90,3 +97,4 @@ The basic flow for playback syncing is as follows:
 - Packet loss: Most protocols built on top of UDP feature their own packet delivery guarantees. With the exception of acks for handshake and loading, this does not. I reasoned that adding an ack for play and pause would add unnecessary complexity, as a simple one way signal of (server) "play" becomes (server) "play" -> (client) "ok" -> (server) "now actually play", and what if one of these packets gets dropped? Instead, if a client does fail to action a signal, it can just be repeated with another play/pause command, which is idempotent.
 - Crashing: Though uncommon, I've sometimes seen this program crash due to some audio encoding issue, which sometimes happens if a misreported audio length causes the decoder to panic because it runs out of samples. This is actually a [known issue](https://github.com/RustAudio/rodio/issues/496) with rodio, and I'm working on putting in some workarounds.
 - Restrictions: Most public WiFis isolate clients so that they can't talk to each other. Thus, this can only be run over a LAN without client/AP isolation enabled. So, most home/private WiFis should work, but public and enterprise WiFis may not.
+- Speed: Loading is honestly extremely slow: it can take up to 45 seconds even for smaller files. I'm looking into ways to speed this up, but for now I don't anticipate it being too much of an issue, as multiple tracks can be loaded simultaneously, and the next track can be loaded while the current track is playing. The yt-dlp download is actually pretty fast, I think the conversion process could be sped up.
