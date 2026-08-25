@@ -3,12 +3,13 @@ use std::path::PathBuf;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-
 use anyhow::{Context, Result};
+
+// Audio and downloading
 use rodio::{Decoder, DeviceSinkBuilder, Player, MixerDeviceSink};
 use yt_dlp::Downloader;
 
-use crate::constants::{packet_types};
+use crate::constants::{packet_types, BROWSER};
 
 // Time syncing
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -49,7 +50,7 @@ impl Audio {
 
         let downloader = Downloader::with_new_binaries(libs_dir.clone(), output_dir.clone())
             .await?
-            .with_cookies_from_browser("chrome")
+            .with_cookies_from_browser(BROWSER)
             .build()
             .await?;
         
@@ -169,7 +170,7 @@ impl Audio {
             .arg("--audio-quality")
             .arg("0")
             .arg("--cookies-from-browser")
-            .arg("firefox")
+            .arg(BROWSER)
             .arg("-o")
             .arg(output_template.to_string_lossy().to_string())
             .arg(&url)

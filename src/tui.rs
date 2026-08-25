@@ -64,7 +64,6 @@ impl SimpleUI {
         Ok(ui)
     }
 
-    // at some point make redraw return a void so we dont have all these _'s
     pub fn update_queue(&mut self, queue: Vec<String>) {
         // keep into account things
         self.queue.clear();

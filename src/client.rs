@@ -6,18 +6,16 @@ use crate::audio::Audio;
 // Crypto and encoding
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
+use aes_gcm::{
+    aead::{ Generate, Key, KeyInit},
+    Aes128Gcm,
+};
 
 // Constants and in-house utils
 use crate::constants::packet_types;
 use crate::utils::{create_frame, extract_payload, packet_type_to_text};
 
 use crate::tui::SimpleUI;
-
-
-use aes_gcm::{
-    aead::{ Generate, Key, KeyInit},
-    Aes128Gcm,
-};
 
 pub struct Client {
     // client constants

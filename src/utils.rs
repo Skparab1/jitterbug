@@ -2,7 +2,7 @@ use crate::constants::{MAGIC_BYTES, packet_types};
 use tokio::net::UdpSocket;
 use std::net::SocketAddr;
 
-// common cryptography
+// cryptography
 use aes_gcm::{
     aead::{AeadInOut, Generate},
     Aes128Gcm,
@@ -33,7 +33,10 @@ pub fn extract_payload(
 	let nonce: &aes_gcm::aead::Nonce<Aes128Gcm> = nonce_slice.try_into().expect("invalid nonce length");
 
 	let mut content_vec = datagram[16..].to_vec();
-	let _ = cipher.decrypt_in_place(nonce, b"", &mut content_vec);
+	if cipher.decrypt_in_place(nonce, b"", &mut content_vec).is_err() {
+		println!("Decryption/authentication failed — dropping datagram");
+		return None;
+	}
 	let content = &content_vec[..];
 
 	// The content now contains packet type (1b), seq (4b), and payload.
