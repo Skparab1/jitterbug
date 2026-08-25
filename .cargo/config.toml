@@ -1,0 +1,3 @@
+[alias]
+client = "run --bin client"
+server = "run --bin server"
