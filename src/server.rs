@@ -3,6 +3,7 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 
 use crate::constants::{packet_types, ConnectionState, SERVER_HOST, SERVER_PORT};
+use std::net::{IpAddr, UdpSocket as StdUdpSocket};
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -42,13 +43,15 @@ pub struct Server {
 
 impl Server {
     pub async fn new() -> Self {
-        let listener = UdpSocket::bind(format!("{}:{}", SERVER_HOST, SERVER_PORT)).await.expect("Socket binding failed");
+        let bind_addr = format!("0.0.0.0:{}", SERVER_PORT);
+        let listener = UdpSocket::bind(&bind_addr).await.expect("Socket binding failed");
 
         let pre_shared_key = Key::<Aes128Gcm>::generate();
         let cipher = Aes128Gcm::new(&pre_shared_key);
-    
-        let sharing_key = STANDARD.encode(format!("{}:{}||{}", SERVER_HOST, SERVER_PORT, STANDARD.encode(pre_shared_key)));
 
+        let lan_ip = Self::detect_lan_ip().unwrap_or_else(|_| SERVER_HOST.parse().unwrap());
+        let sharing_key = STANDARD.encode(format!("{}:{}||{}", lan_ip, SERVER_PORT, STANDARD.encode(pre_shared_key)));
+    
         let audio = Audio::new("server-temp-assets".to_string()).await.expect("Initializing server side audio failed.");
 
         let ui = SimpleUI::new(sharing_key, true);
@@ -65,6 +68,13 @@ impl Server {
 
             ui: ui.expect("UI failed to initialize"),
         }
+    }
+
+    // ask the OS what address it is using without actually sending a packet.
+    fn detect_lan_ip() -> anyhow::Result<IpAddr> {
+        let socket = StdUdpSocket::bind("0.0.0.0:0")?;
+        socket.connect("8.8.8.8:80")?;
+        Ok(socket.local_addr()?.ip())
     }
 
     pub async fn send_datagram_to_client(&mut self, 
