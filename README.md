@@ -67,6 +67,10 @@ This project was inpired a longstanding want for a simple music syncing tool. I'
     - The server sends a `play` command. This signal comes with a specific playback timestamp (like 01:11) and a unix timestamp. This tells the client: "wait until `unix timestamp`, then play the current audio at `timestamp`".
 - Instructions like volume, and pause are actioned immediately.
 
+<p align="center">
+    <img src="./assets/playback.png" alt="Diagram of playback flow described above" width="50%">
+</p>
+
 ## Protocol
 ### Frame
 - The frame was meant to be minimal. It looks like:
@@ -83,7 +87,11 @@ This project was inpired a longstanding want for a simple music syncing tool. I'
 - SYN: The client generates a nonce, encrypts it with the the PSK (AES-GCM-128), and sends it to the server.
 - The server decrypts the payload, obtaining the nonce. Since this is AEAD, if the client does not have the PSK, this will fail.
 - ACK: The server re-encrypts the nonce with the PSK, and sends it back to the client. This reply looks different because the AES-GCM-128 nonce is difference.
-- Verify: The client verifies that returned nonce matches, and confirms the connection
+- Verify: The client verifies that returned nonce matches, and confirms the connection.
+
+<p align="center">
+    <img src="./assets/handshake.png" alt="Diagram of handshake described above" width="50%">
+</p>
 
 ## Terminal Application
 - The terminal UI is made using Ratatui. It has the following components
