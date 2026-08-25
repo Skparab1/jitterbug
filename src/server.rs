@@ -1,22 +1,20 @@
+// networking
 use tokio::net::UdpSocket;
+use std::net::{IpAddr, UdpSocket as StdUdpSocket};
+use std::net::SocketAddr;
+
+// audio and encoding
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
-
-use crate::constants::{packet_types, ConnectionState, SERVER_HOST, SERVER_PORT};
-use std::net::{IpAddr, UdpSocket as StdUdpSocket};
-
-use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::str::FromStr;
 use std::time::Duration;
-
-use crate::utils::{extract_payload, send_datagram};
+use std::collections::HashMap;
 use crate::audio::Audio;
 
 use crate::tui::SimpleUI;
 
-
-// clean up the imports later
+use crate::constants::{packet_types, ConnectionState, SERVER_HOST, SERVER_PORT};
+use crate::utils::{extract_payload, send_datagram};
 
 use aes_gcm::{
     aead::{Generate, Key, KeyInit},

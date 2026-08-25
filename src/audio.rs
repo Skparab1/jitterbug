@@ -3,8 +3,9 @@ use std::path::PathBuf;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-
 use anyhow::{Context, Result};
+
+// Audio and downloading
 use rodio::{Decoder, DeviceSinkBuilder, Player, MixerDeviceSink};
 use yt_dlp::Downloader;
 

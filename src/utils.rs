@@ -2,7 +2,7 @@ use crate::constants::{MAGIC_BYTES, packet_types};
 use tokio::net::UdpSocket;
 use std::net::SocketAddr;
 
-// common cryptography
+// cryptography
 use aes_gcm::{
     aead::{AeadInOut, Generate},
     Aes128Gcm,
